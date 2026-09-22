@@ -1,0 +1,293 @@
+token: "<YOUR_TOKEN_HERE>"
+data_root: /data/challenge/scannetpp_data
+root_url: https://scannetpp.mlsg.cit.tum.de/scannetpp/download/v2?version=v1&token=TOKEN&file=FILEPATH
+metadata_only: false
+dry_run: false
+verbose: false
+default_assets:
+- dslr_train_test_lists_path
+- dslr_resized_dir
+- dslr_resized_mask_dir
+- dslr_resized_undistorted_dir
+- dslr_resized_undistorted_mask_dir
+- dslr_nerfstudio_transform_undistorted_path
+- dslr_colmap_dir
+- dslr_nerfstudio_transform_path
+- scan_mesh_path
+- scan_mesh_mask_path
+- scan_mesh_segs_path
+- scan_anno_json_path
+- scan_sem_mesh_path
+- iphone_video_path
+- iphone_video_mask_path
+- iphone_depth_path
+- iphone_pose_intrinsic_imu_path
+- iphone_colmap_dir
+- iphone_exif_path
+- iphone_nerfstudio_transform_path
+- pano_rgb_dir
+- pano_anon_mask_dir
+- pano_depth_dir
+- pano_azim_dir
+- pano_elev_dir
+- pano_resized_rgb_dir
+- pano_resized_depth_dir
+- pano_resized_mask_dir
+- pano_resized_azim_dir
+- pano_resized_elev_dir
+option_assets:
+  nvs_dslr:
+  - dslr_train_test_lists_path
+  - dslr_resized_dir
+  - dslr_resized_mask_dir
+  - dslr_colmap_dir
+  - dslr_nerfstudio_transform_path
+  nvs_iphone:
+  - iphone_video_path
+  - iphone_video_mask_path
+  - iphone_pose_intrinsic_imu_path
+  - iphone_colmap_dir
+  semantic:
+  - scan_mesh_path
+  - scan_mesh_segs_path
+  - scan_anno_json_path
+  - scan_sem_mesh_path
+  scans:
+  - scan_transformed_poses_path
+  - scan_pc_path
+  - scan_pc_mask_path
+  - scan_mesh_path
+  - scan_mesh_mask_path
+  - scan_mesh_segs_path
+  - scan_anno_json_path
+  - scan_sem_mesh_path
+  dslr_hires:
+  - dslr_train_test_lists_path
+  - dslr_resized_dir
+  - dslr_resized_mask_dir
+  - dslr_original_dir
+  - dslr_original_mask_dir
+  - dslr_colmap_dir
+  - dslr_nerfstudio_transform_path
+  iphone:
+  - iphone_video_path
+  - iphone_video_mask_path
+  - iphone_depth_path
+  - iphone_pose_intrinsic_imu_path
+  - iphone_colmap_dir
+  panocam:
+  - pano_rgb_dir
+  - pano_anon_mask_dir
+  - pano_depth_dir
+  - pano_azim_dir
+  - pano_elev_dir
+  - pano_resized_rgb_dir
+  - pano_resized_depth_dir
+  - pano_resized_mask_dir
+  - pano_resized_azim_dir
+  - pano_resized_elev_dir
+splits:
+- nvs_sem_train
+- nvs_sem_val
+- nvs_test
+- sem_test
+- nvs_test_iphone
+meta_files:
+- splits/nvs_sem_train.txt
+- splits/nvs_sem_val.txt
+- splits/nvs_test.txt
+- splits/nvs_test_small.txt
+- splits/sem_test.txt
+- splits/nvs_test_iphone.txt
+- metadata/scene_types.json
+- metadata/semantic_classes.txt
+- metadata/instance_classes.txt
+- metadata/semantic_benchmark/top100.txt
+- metadata/semantic_benchmark/top100_instance.txt
+- metadata/semantic_benchmark/map_benchmark.csv
+scene_assets:
+- dslr_resized_dir
+- dslr_resized_mask_dir
+- dslr_original_dir
+- dslr_original_mask_dir
+- dslr_colmap_dir
+- dslr_nerfstudio_transform_path
+- dslr_train_test_lists_path
+- dslr_resized_undistorted_dir
+- dslr_resized_undistorted_mask_dir
+- dslr_nerfstudio_transform_undistorted_path
+- scan_pc_path
+- scan_pc_mask_path
+- scan_transformed_poses_path
+- scan_mesh_path
+- scan_mesh_mask_path
+- scan_mesh_segs_path
+- scan_anno_json_path
+- scan_sem_mesh_path
+- iphone_video_path
+- iphone_video_mask_path
+- iphone_depth_path
+- iphone_pose_intrinsic_imu_path
+- iphone_colmap_dir
+- iphone_nerfstudio_transform_path
+- iphone_exif_path
+- pano_rgb_dir
+- pano_anon_mask_dir
+- pano_depth_dir
+- pano_azim_dir
+- pano_elev_dir
+- pano_resized_rgb_dir
+- pano_resized_depth_dir
+- pano_resized_mask_dir
+- pano_resized_azim_dir
+- pano_resized_elev_dir
+exclude_assets:
+  nvs_test:
+  - iphone_depth_path
+  - scan_pc_path
+  - scan_pc_mask_path
+  - scan_transformed_poses_path
+  - scan_mesh_path
+  - scan_mesh_mask_path
+  - scan_mesh_segs_path
+  - scan_anno_json_path
+  - scan_sem_mesh_path
+  - pano_rgb_dir
+  - pano_anon_mask_dir
+  - pano_depth_dir
+  - pano_azim_dir
+  - pano_elev_dir
+  - pano_resized_rgb_dir
+  - pano_resized_depth_dir
+  - pano_resized_mask_dir
+  - pano_resized_azim_dir
+  - pano_resized_elev_dir
+  sem_test:
+  - scan_mesh_segs_path
+  - scan_anno_json_path
+  - scan_sem_mesh_path
+  nvs_test_iphone:
+  - dslr_resized_dir
+  - dslr_resized_mask_dir
+  - dslr_original_dir
+  - dslr_original_mask_dir
+  - dslr_nerfstudio_transform_path
+  - dslr_train_test_lists_path
+  - dslr_resized_undistorted_dir
+  - dslr_resized_undistorted_mask_dir
+  - dslr_nerfstudio_transform_undistorted_path
+  - dslr_colmap_dir
+  - scan_pc_path
+  - scan_pc_mask_path
+  - scan_transformed_poses_path
+  - scan_mesh_path
+  - scan_mesh_mask_path
+  - scan_mesh_segs_path
+  - scan_anno_json_path
+  - scan_sem_mesh_path
+  - pano_rgb_dir
+  - pano_anon_mask_dir
+  - pano_depth_dir
+  - pano_azim_dir
+  - pano_elev_dir
+  - pano_resized_rgb_dir
+  - pano_resized_depth_dir
+  - pano_resized_mask_dir
+  - pano_resized_azim_dir
+  - pano_resized_elev_dir
+zipped_assets:
+- dslr_resized_dir
+- dslr_resized_mask_dir
+- dslr_original_dir
+- dslr_original_mask_dir
+- dslr_resized_undistorted_dir
+- dslr_resized_undistorted_mask_dir
+- dslr_nerfstudio_transform_undistorted_path
+- dslr_colmap_dir
+- scan_pc_path
+- scan_mesh_path
+- scan_sem_mesh_path
+- scan_mesh_segs_path
+- scan_anno_json_path
+- iphone_video_mask_path
+- iphone_depth_path
+- iphone_pose_intrinsic_imu_path
+- iphone_colmap_dir
+- iphone_nerfstudio_transform_path
+- iphone_exif_path
+- pano_rgb_dir
+- pano_anon_mask_dir
+- pano_depth_dir
+- pano_azim_dir
+- pano_elev_dir
+- pano_resized_rgb_dir
+- pano_resized_depth_dir
+- pano_resized_mask_dir
+- pano_resized_azim_dir
+- pano_resized_elev_dir
+scannetpp_gs_url: https://scannetpp.mlsg.cit.tum.de/scannetpp/download/scannetpp_gs?version=v1&token=TOKEN&file=FILEPATH
+scannetpp_gs_dir: null
+download_scenes:
+- daffc70503
+- 6d89a7320d
+- 28a9ee4557
+- 4a1a3a7dc5
+- 260fa55d50
+- b09431c547
+- f25f5e6f63
+- a29cccc784
+- b97261909e
+- 6855e1ac32
+- bc03d88fc3
+- 1841a0b525
+- 0a76e06478
+- 8f82c394d6
+- 7968e15e5e
+- 5d591ff74d
+- 8254184bfc
+- 4d451d9c36
+- 1cefb55d50
+- a66af39cef
+- b3ac0beef0
+- 5fd8addedf
+- 5bc6227191
+- e3c1da58dd
+- 06bd2cf800
+- e3c39f4aea
+- a4d48ea6b3
+- 635852d56e
+- a72f31d6a6
+- edced53026
+- e3ef8b690b
+- a4f10da05d
+- 2c7c10379b
+- 29b18b8c4f
+- 10c8ab99f4
+- 3583c4c70f
+- d3ba8b4232
+- 2150596d57
+- 924b364b9f
+- f311090fa6
+- 7b4cb756d4
+- b37177e6c8
+- 2634683a9f
+- 7b4a316aea
+- 0452249a1e
+- e1fb8626c8
+- 956e415fb1
+- 39705fbdf1
+- 4291be3b44
+- 64b8886d68
+- 9ad3639fbe
+- 95c9a0f535
+- 9d8fcc4215
+- fb5a96b1a2
+- 13c3e046d7
+- f3d64c30f8
+- ebff4de90b
+- 5298ec174f
+- b074ca565a
+- be2e10f16a
+- a24858e51e
+- accad58571
+- 6f12492455

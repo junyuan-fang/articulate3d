@@ -1,0 +1,19 @@
+# @package _group_
+# Same as callbacks_instance_segmentation, except the checkpoint selector
+# watches the leaderboard objective instead of the class-mean AP50.
+#
+# `val_mean_ap_50` is the mean over semantic classes of the mask-only AP50. When
+# the backbone is frozen it is (up to eval noise) constant, so it selects
+# essentially at random among articulation-head epochs. `MAO_ST_ap50` is the
+# metric the server ranks on: IoU>0.5 AND axis within 15 deg AND both origin
+# projections within 0.25 m.
+- _target_: pytorch_lightning.callbacks.ModelCheckpoint
+  monitor: MAO_ST_ap50
+  save_last: true
+  save_top_k: 5
+  mode: max
+  dirpath: ${general.save_dir}
+  filename: "{epoch}-{MAO_ST_ap50:.4f}"
+  every_n_epochs: 1
+
+- _target_: pytorch_lightning.callbacks.LearningRateMonitor

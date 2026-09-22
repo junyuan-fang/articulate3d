@@ -1,0 +1,918 @@
+diff --git a/conf/config_articulation_instance_segmentation.yaml b/conf/config_articulation_instance_segmentation.yaml
+index b1cc0e8..e94d5f1 100644
+--- a/conf/config_articulation_instance_segmentation.yaml
++++ b/conf/config_articulation_instance_segmentation.yaml
+@@ -6,6 +6,22 @@ general:
+   backbone_checkpoint: null
+   interaction_backbone_checkpoint: null
+   freeze_backbone: false # train only last layer
++  # Freeze everything except the articulation heads. Segmentation output then
++  # stays bit-identical to the source checkpoint, so AP50 provably cannot move.
++  freeze_except_articulation: false
++  # origin heads + axis bin/residual heads trainable; free-regression axis heads stay frozen
++  train_heads_v2: false
++  # v5 stage A: only axis_res_head trainable (bounded in-bin polish)
++  train_axis_res_only: false
++  # Stage B: only the axis anchor classifier trainable (lateral-hinge rescue)
++  train_axis_cls_only: false
++  # LR multiplier for the zero-initialised articulation-head-v2 modules
++  # (origin_attn_*, axis_cls_head, axis_res_head). 1.0 = single param group.
++  new_head_lr_mult: 1.0
++  # With freeze_except_articulation, narrow the trainable set further to the
++  # origin branch only, so the predicted axes stay bit-identical to the source
++  # checkpoint as well as the masks.
++  train_origin_only: false
+   linear_probing_backbone: false
+   train_on_segments: false
+   eval_on_segments: false
+diff --git a/conf/data/datasets/articulate3d_challenge_mov.yaml b/conf/data/datasets/articulate3d_challenge_mov.yaml
+index ba34430..1000c06 100644
+--- a/conf/data/datasets/articulate3d_challenge_mov.yaml
++++ b/conf/data/datasets/articulate3d_challenge_mov.yaml
+@@ -17,6 +17,8 @@ train_dataset:
+   add_instance: ${data.add_instance}
+   # different augs experiments
+   instance_oversampling: 0.0
++  random_flip: false
++  random_rot_z: 0.0
+   place_around_existing: false
+   point_per_cut: 0
+   max_cut_region: 0
+diff --git a/conf/loss/set_criterion_articulation.yaml b/conf/loss/set_criterion_articulation.yaml
+index 190965d..21d84c3 100644
+--- a/conf/loss/set_criterion_articulation.yaml
++++ b/conf/loss/set_criterion_articulation.yaml
+@@ -11,4 +11,8 @@ oversample_ratio: 3.0
+ importance_sample_ratio: 0.75
+ class_weights: -1
+ regular_arti_loss: True
++# align the articulation loss with the eval criteria (docs/05-improvement.md)
++axis_loss_abs_cos: False   # metric uses |cos|; set True to stop penalising 180-deg flips
++origin_loss_sym: True      # set False to drop the dist_pred_axis term the metric never measures
++axis_horiz_weight: 1.0     # >1 upweights horizontal-axis rotation targets (6.4% of train) in the axis loss
+ use_mov_mask_for_interaction_loss: False
+\ No newline at end of file
+diff --git a/conf/model/mask3d_articulation.yaml b/conf/model/mask3d_articulation.yaml
+index 4aa98ce..521360f 100644
+--- a/conf/model/mask3d_articulation.yaml
++++ b/conf/model/mask3d_articulation.yaml
+@@ -31,6 +31,17 @@ articulation_type_mapping:
+ reserve_arti_net: false
+ pointwise_origin: True
+ pointwise_axis: True
++# articulation head v2 -- see docs/06-finetune-design.md
++# origin_agg: "mean" = stock uniform average over the mask (baseline),
++#             "attn" = query-conditioned masked softmax, identical at init
++origin_agg: "mean"
++origin_attn_dim: 64
++origin_attn_temp: 1.0
++# axis_bin_residual: discrete anchor choice + in-bin residual instead of free
++# 3-vector regression; warm-started from the free branch, identical-ish at init
++axis_bin_residual: False
++axis_prior_temp: 10.0
++axis_res_scale: 0.0   # 0 = unbounded residual; 0.3 caps the in-bin correction
+ # interaction prediction
+ predict_hierarchy_interaction: false
+ predict_hierarchy_interaction_mode: 0
+diff --git a/datasets/semseg.py b/datasets/semseg.py
+index 421f70c..04b5acc 100644
+--- a/datasets/semseg.py
++++ b/datasets/semseg.py
+@@ -76,6 +76,8 @@ class SemanticSegmentationDataset(Dataset):
+         cropping=False,
+         cropping_args=None,
+         is_tta=False,
++        random_flip=False,
++        random_rot_z=0.0,
+         crop_min_size=20000,
+         crop_length=6.0,
+         cropping_v1=True,
+@@ -168,6 +170,8 @@ class SemanticSegmentationDataset(Dataset):
+         self.cropping = cropping
+         self.cropping_args = cropping_args
+         self.is_tta = is_tta
++        self.random_flip = random_flip
++        self.random_rot_z = random_rot_z
+         self.on_crops = on_crops
+ 
+         self.crop_min_size = crop_min_size
+@@ -612,6 +616,7 @@ class SemanticSegmentationDataset(Dataset):
+         # volume and image augmentations for train
+         shift = np.zeros(3)
+         flip_axis = {}
++        rot_z = 0.0
+         if "train" in self.mode or self.is_tta:
+             if self.cropping:
+                 # new_idx = self.random_cuboid(
+@@ -645,6 +650,17 @@ class SemanticSegmentationDataset(Dataset):
+                 print(coordinates.shape)
+                 raise err
+ 
++            if self.random_rot_z > 0:
++                # Yaw augmentation. Gravity is signal for this task (93% of
++                # rotation axes are vertical), so only the azimuth is randomised
++                # -- never pitch/roll. Applied AFTER shift so the GT transform
++                # composes as shift -> rotate -> flip, matching the order below.
++                rot_z = float(np.random.uniform(-self.random_rot_z, self.random_rot_z))
++                cz, sz = np.cos(rot_z), np.sin(rot_z)
++                R = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
++                coordinates = coordinates @ R.T
++                normals = normals @ R.T
++
+             if self.instance_oversampling > 0.0:
+                 (
+                     coordinates,
+@@ -662,11 +678,19 @@ class SemanticSegmentationDataset(Dataset):
+             if self.flip_in_center:
+                 coordinates = flip_in_center(coordinates)
+ 
+-            # for i in (0, 1):
+-            #     if random() < 0.5:
+-            #         coord_max = np.max(points[:, i])
+-            #         coordinates[:, i] = coord_max - coordinates[:, i]
+-            #         flip_axis[i] = coord_max
++            if self.random_flip:
++                # Mirror about x and/or y. coordinates already carry `shift`,
++                # and the GT transform at the bottom of __getitem__ composes
++                # shift-then-flip in the same order, so recording
++                # flip_axis[i] = coord_max keeps points and articulation GT
++                # consistent. Normals get component i negated to stay valid
++                # (unused when add_normals=False, but kept correct).
++                for i in (0, 1):
++                    if random() < 0.5:
++                        coord_max = np.max(coordinates[:, i])
++                        coordinates[:, i] = coord_max - coordinates[:, i]
++                        normals[:, i] = -normals[:, i]
++                        flip_axis[i] = coord_max
+ 
+             if random() < 0.95:
+                 if self.is_elastic_distortion:
+@@ -879,7 +903,7 @@ class SemanticSegmentationDataset(Dataset):
+                 raw_normals,
+                 raw_coordinates,
+                 idx,
+-                (shift, flip_axis)
++                (shift, flip_axis, rot_z)
+             )
+         elif self.dataset_name == "scenefun3d":
+             return (
+@@ -891,7 +915,7 @@ class SemanticSegmentationDataset(Dataset):
+                 raw_normals,
+                 raw_coordinates,
+                 idx,
+-                (shift, flip_axis)
++                (shift, flip_axis, rot_z)
+             )
+         elif self.dataset_name == "articulate3d":
+             if self.use_hierarchy:
+@@ -904,7 +928,7 @@ class SemanticSegmentationDataset(Dataset):
+                     raw_normals,
+                     raw_coordinates,
+                     idx,
+-                    (shift, flip_axis),
++                    (shift, flip_axis, rot_z),
+                     inter_ids
+                 )
+             else:
+@@ -917,7 +941,7 @@ class SemanticSegmentationDataset(Dataset):
+                     raw_normals,
+                     raw_coordinates,
+                     idx,
+-                    (shift, flip_axis)                )
++                    (shift, flip_axis, rot_z)                )
+         else:
+             return (
+                 coordinates,
+@@ -1306,6 +1330,8 @@ class SemanticSegmentationArticulationDataset(SemanticSegmentationDataset):
+         cropping=False,
+         cropping_args=None,
+         is_tta=False,
++        random_flip=False,
++        random_rot_z=0.0,
+         crop_min_size=20000,
+         crop_length=6.0,
+         cropping_v1=True,
+@@ -1333,7 +1359,7 @@ class SemanticSegmentationArticulationDataset(SemanticSegmentationDataset):
+                          image_augmentations_path, instance_oversampling, place_around_existing, 
+                          max_cut_region, point_per_cut, flip_in_center, noise_rate, 
+                          resample_points, cache_data, add_unlabeled_pc, task, cropping, 
+-                         cropping_args, is_tta, crop_min_size, crop_length, cropping_v1, 
++                         cropping_args, is_tta, random_flip, random_rot_z, crop_min_size, crop_length, cropping_v1,
+                          reps_per_epoch, area, on_crops, eval_inner_core, 
+                          filter_out_classes, label_offset, add_clip, 
+                          is_elastic_distortion, color_drop, epoch, use_coarse_to_fine,
+@@ -1356,13 +1382,25 @@ class SemanticSegmentationArticulationDataset(SemanticSegmentationDataset):
+             arti_anno = load_dict_from_h5file(articulation_file)
+             if 'train' in self.mode:
+                 # translate the origin 
+-                shift, flip_axis = coord_aug_info 
++                shift, flip_axis, rot_z = coord_aug_info 
++                cz, sz = np.cos(rot_z), np.sin(rot_z)
++                Rz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
+                 for inst_id in arti_anno:
+                     arti_anno[inst_id]['origin'] += shift
++                    if rot_z != 0.0:
++                        # same order as the point transform: shift, then rotate
++                        arti_anno[inst_id]['origin'] = Rz @ arti_anno[inst_id]['origin']
++                        arti_anno[inst_id]['axis'] = Rz @ arti_anno[inst_id]['axis']
+                     # flip 
+                     for axis in flip_axis:
+                         arti_anno[inst_id]['origin'][axis] = flip_axis[axis] - arti_anno[inst_id]['origin'][axis]
+-                        arti_anno[inst_id]['axis'] = - arti_anno[inst_id]['axis']
++                        # Mirroring about coordinate plane i negates ONLY
++                        # component i of a direction vector. The original line
++                        # negated the whole vector -- i.e. a 180-deg reversal,
++                        # geometrically wrong for any axis not aligned with i.
++                        # (Harmless historically only because the flip block in
++                        # __getitem__ was commented out; docs/07 section 4.)
++                        arti_anno[inst_id]['axis'][axis] = - arti_anno[inst_id]['axis'][axis]
+             # get center of each movalbe parts 
+             mov_parts_centers = {}
+             for inst_id in arti_anno:
+diff --git a/main_instance_segmentation_articulation.py b/main_instance_segmentation_articulation.py
+index bd8c34f..1dfd6d9 100644
+--- a/main_instance_segmentation_articulation.py
++++ b/main_instance_segmentation_articulation.py
+@@ -8,6 +8,17 @@ from dotenv import load_dotenv
+ from omegaconf import DictConfig, OmegaConf
+ from trainer.trainer import InstanceSegmentation, RegularCheckpointing, EpochSettingCallback
+ from pytorch_lightning.callbacks import ModelCheckpoint, Callback
++
++# PyTorch >=2.6 defaults torch.load(weights_only=True), which rejects the
++# omegaconf objects Lightning stores in its checkpoints and breaks
++# resume_from_checkpoint. All checkpoints here are locally produced.
++import torch as _torch
++_orig_torch_load = _torch.load
++def _trusted_load(*args, **kwargs):
++    kwargs.setdefault("weights_only", False)
++    return _orig_torch_load(*args, **kwargs)
++_torch.load = _trusted_load
++
+ from utils.utils import (
+     flatten_dict,
+     load_baseline_model,
+diff --git a/models/criterion.py b/models/criterion.py
+index 8574a30..fe09eef 100644
+--- a/models/criterion.py
++++ b/models/criterion.py
+@@ -134,6 +134,15 @@ class SetCriterion(nn.Module):
+         importance_sample_ratio,
+         class_weights,
+         regular_arti_loss = True,
++        # Both default to the original behaviour so existing configs are
++        # unaffected; set them in conf/loss/*.yaml to align the loss with the
++        # evaluation criteria (see docs/05-improvement.md).
++        axis_loss_abs_cos = False,
++        origin_loss_sym = True,
++        # >1 upweights the axis loss on rotation targets whose GT axis is
++        # horizontal (>60 deg from vertical) -- the 6.4%-of-train lateral-hinge
++        # mode the head otherwise averages away. 1.0 = original behaviour.
++        axis_horiz_weight = 1.0,
+         use_mov_mask_for_interaction_loss = False,
+     ):
+         """Create the criterion.
+@@ -152,7 +161,11 @@ class SetCriterion(nn.Module):
+         self.eos_coef = eos_coef
+         self.losses = losses
+         self.regular_arti_loss = regular_arti_loss
++        self.axis_loss_abs_cos = axis_loss_abs_cos
++        self.origin_loss_sym = origin_loss_sym
++        self.axis_horiz_weight = axis_horiz_weight
+         print("self.regular_arti_loss: ", self.regular_arti_loss)
++        print(f"axis_loss_abs_cos={axis_loss_abs_cos}  origin_loss_sym={origin_loss_sym}")
+         empty_weight = torch.ones(self.num_classes + 1)
+         empty_weight[-1] = self.eos_coef
+ 
+@@ -213,8 +226,15 @@ class SetCriterion(nn.Module):
+             map_axises = outputs["pred_axises"][batch_id][map_ids, :]
+             target_axises = targets[batch_id]['articulations']['axis'][target_ids]
+             if map_origins.shape[0] == 0 or target_origins.shape[0] == 0:
+-                loss_origins.append(torch.tensor(0.0, device=map_origins.device))
+-                loss_axises.append(torch.tensor(0.0, device=map_origins.device))
++                # `0 * pred` rather than a fresh constant: a plain
++                # torch.tensor(0.0) is a leaf with no grad_fn, and when the only
++                # trainable parameters are the origin branch
++                # (general.train_origin_only) a crop whose matched instances are
++                # all translation makes the *entire* batch loss constant --
++                # backward then dies with "element 0 of tensors does not require
++                # grad". Keeping the graph alive costs nothing numerically.
++                loss_origins.append(map_origins.sum() * 0.0)
++                loss_axises.append(map_axises.sum() * 0.0)
+                 continue
+             if self.regular_arti_loss:
+                 # print(f"Shape of outputs['pred_origins']: {outputs['pred_origins'].shape}")
+@@ -228,8 +248,31 @@ class SetCriterion(nn.Module):
+                 # calculate axis loss
+                 map_axises_normalized = F.normalize(map_axises, dim=1)
+                 target_axises_normalized = F.normalize(target_axises, dim=1)
+-                loss_axises_vec = 1 - torch.sum(map_axises_normalized * target_axises_normalized, dim=1)
+-                loss_axises.append(torch.sum(loss_axises_vec) / map_axises_normalized.shape[0])
++                cos = torch.sum(map_axises_normalized * target_axises_normalized, dim=1)
++                if self.axis_loss_abs_cos:
++                    # The metric is sign-agnostic -- match_criteria_MA_pred takes
++                    # arccos(|cos|) -- so an axis flipped by 180 deg scores as a
++                    # perfect hit. Penalising it with 1-cos (max loss) fights the
++                    # metric; 1-|cos| matches it.
++                    cos = cos.abs()
++                loss_axises_vec = 1 - cos
++                if self.axis_horiz_weight != 1.0:
++                    # Rebalance the rare lateral-hinge mode. Train GT has 1285
++                    # rotation instances of which only 82 (6.4%) have a
++                    # horizontal axis; under a plain mean the 14:1 imbalance
++                    # collapses the head onto the gravity prior (all 8 lateral
++                    # hinges in val fail by 85-90 deg). Upweighting rotation
++                    # targets whose GT axis is >60 deg from vertical brings the
++                    # effective ratio to ~1:3 at weight 5.
++                    tlabels = targets[batch_id]['labels'][target_ids].to(cos.device)
++                    zcomp = target_axises_normalized[:, 2].abs()
++                    horiz = (tlabels == 1) & (zcomp < 0.5)   # cos(60 deg)
++                    w = torch.where(horiz,
++                                    torch.full_like(cos, self.axis_horiz_weight),
++                                    torch.ones_like(cos))
++                    loss_axises.append(torch.sum(w * loss_axises_vec) / w.sum())
++                else:
++                    loss_axises.append(torch.sum(loss_axises_vec) / map_axises_normalized.shape[0])
+                 
+                 # calculate origin loss                    
+                 loss_translations_item = []
+@@ -249,10 +292,19 @@ class SetCriterion(nn.Module):
+                         # print("target_axis shape: ", target_axis.shape)
+                         dist_gt_axis = torch.norm(dist_vec_gt_axis) / torch.norm(target_axis)
+                         dist_pred_axis = torch.norm(dist_vec_pred_axis) / (torch.norm(pred_axis) + torch.tensor(1e-6, device=map_origins.device))
+-                        loss_translations_item.append(dist_gt_axis + dist_pred_axis)
++                        # dist_gt_axis is exactly what the metric measures: the
++                        # perpendicular distance from the predicted origin to the
++                        # GT axis line. dist_pred_axis (GT origin -> *predicted*
++                        # axis line) appears nowhere in the metric and pulls the
++                        # gradient elsewhere, so it is off by default.
++                        if self.origin_loss_sym:
++                            loss_translations_item.append(dist_gt_axis + dist_pred_axis)
++                        else:
++                            loss_translations_item.append(dist_gt_axis)
+                     else:
+-                        # translation, don't care about the origin
+-                        loss_translations_item.append(torch.tensor(0.0, device=map_origins.device))
++                        # translation, don't care about the origin. Same reason as
++                        # above for `0 * pred` instead of a bare zero constant.
++                        loss_translations_item.append(pred_origin.sum() * 0.0)
+                      
+                 loss_origins.append(torch.sum(torch.stack(loss_translations_item)) / len(loss_translations_item))
+             
+diff --git a/models/mask3d.py b/models/mask3d.py
+index f31933f..6ce0be2 100644
+--- a/models/mask3d.py
++++ b/models/mask3d.py
+@@ -65,6 +65,22 @@ class Mask3D(nn.Module):
+         pred_mov_centers = False,
+         pointwise_origin = True,
+         pointwise_axis = True,
++        # --- articulation head v2 (see docs/06-finetune-design.md) ---------
++        # "mean" reproduces the stock uniform average over the mask; "attn"
++        # replaces it with a masked softmax whose logits are zero-initialised,
++        # so at load time the two are numerically identical and finetuning can
++        # only move away from the baseline deliberately.
++        origin_agg = "mean",
++        origin_attn_dim = 64,
++        origin_attn_temp = 1.0,
++        # axis anchors: classify onto {z, x, y} + per-anchor residual instead of
++        # regressing a free 3-vector that collapses onto the gravity prior.
++        axis_bin_residual = False,
++        axis_prior_temp = 10.0,
++        # 0 = unbounded in-bin residual (what the v2_full run used);
++        # >0 caps it at tanh * axis_res_scale radians-ish, keeping the anchor
++        # structure instead of degenerating back into free regression
++        axis_res_scale = 0.0,
+         use_lora = False,
+         lora_r = 8,
+         lora_alpha = 16,
+@@ -108,7 +124,12 @@ class Mask3D(nn.Module):
+         self.pred_mov_centers = pred_mov_centers
+         self.pointwise_origin = pointwise_origin
+         self.pointwise_axis = pointwise_axis
+-        
++        self.origin_agg = origin_agg
++        self.origin_attn_dim = origin_attn_dim
++        self.origin_attn_temp = origin_attn_temp
++        self.axis_bin_residual = axis_bin_residual
++        self.axis_res_scale = axis_res_scale
++
+         self.backbone = hydra.utils.instantiate(config.backbone)
+         self.num_levels = len(self.hlevels)
+         sizes = self.backbone.PLANES[-5:]
+@@ -309,7 +330,85 @@ class Mask3D(nn.Module):
+                     bias=True,
+                     D=3,
+                 )
+-                
++
++            # ---------------- articulation head v2 ------------------------
++            # Diagnosis (docs/04-diagnosis.md): the origin head averages
++            # (point + offset) uniformly over the whole predicted mask, and a
++            # uniform average of a part is its centroid. 77.2% of predicted
++            # origins are pulled toward the centroid and recover only 29% of the
++            # centroid->hinge distance, while the hinge itself sits on a lateral
++            # *edge* of the part (an endpoint perpendicular to the axis; snapping
++            # there is worth +0.061 val by itself). So the fix is to let the head
++            # choose *which* points to average, not to add more capacity.
++            #
++            # A masked softmax over the mask's points does exactly that and
++            # strictly generalises the mean: logits == 0 gives 1/N on every
++            # masked point, i.e. the original mean. origin_attn_out is
++            # zero-initialised, so a checkpoint loaded into this model produces
++            # bit-identical origins until training moves the weights.
++            if self.origin_agg == "attn":
++                # +3 for the raw coordinate: "am I on the edge of this part" is
++                # a positional question, and the query supplies the part context
++                self.origin_attn_key = nn.Sequential(
++                    nn.Linear(hidden_dim + 3, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, self.origin_attn_dim),
++                )
++                self.origin_attn_query = nn.Sequential(
++                    nn.Linear(hidden_dim, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, self.origin_attn_dim),
++                )
++                # query-independent "hinge-likeness" of a point
++                self.origin_attn_bias = nn.Linear(hidden_dim + 3, 1)
++                # the identity-at-init gate
++                self.origin_attn_out = nn.Linear(self.origin_attn_dim,
++                                                 self.origin_attn_dim, bias=False)
++                nn.init.zeros_(self.origin_attn_out.weight)
++                nn.init.zeros_(self.origin_attn_bias.weight)
++                nn.init.zeros_(self.origin_attn_bias.bias)
++
++            # Axis: 93.3% of matched rotation GT axes are within 15 deg of
++            # gravity, and a free 3-vector regression under a 1-cos loss just
++            # learns that mode -- the trivial "always output z" baseline beats
++            # the model on rotation 0 wins / 9 losses, and all 8 lateral hinges
++            # fail by 85-90 deg. Classifying onto {z, x, y} with a class-balanced
++            # CE and regressing a residual inside the chosen bin keeps the rare
++            # lateral mode from being averaged away.
++            if self.axis_bin_residual:
++                # Two anchors, chosen by measurement rather than by taste. A fixed
++                # azimuth grid was the obvious design and it is worse: replaying
++                # each candidate head-init on the val preds (analysis/pp_sweep3.py)
++                # gives AP50_axis 0.4485 for {z + 4 azimuths}, 0.4655 for
++                # {z + 8 azimuths} and 0.4677 for {gravity, own-horizontal}.
++                # Translation axes are horizontal but their azimuth is arbitrary,
++                # so quantising azimuth throws away exactly the information that
++                # branch is good at. Anchor 1 is therefore data-dependent: the
++                # free axis with its vertical component projected out.
++                n_anchor = 2
++                self.axis_prior_temp = axis_prior_temp
++                self.axis_cls_head = nn.Sequential(
++                    nn.Linear(2 * hidden_dim, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, n_anchor),
++                )
++                self.axis_res_head = nn.Sequential(
++                    nn.Linear(2 * hidden_dim, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, hidden_dim),
++                    nn.ReLU(),
++                    nn.Linear(hidden_dim, 3 * n_anchor),
++                )
++                # zero-init both output layers: at load time the head returns the
++                # anchor nearest to the baseline's own axis prediction
++                nn.init.zeros_(self.axis_cls_head[-1].weight)
++                nn.init.zeros_(self.axis_cls_head[-1].bias)
++                nn.init.zeros_(self.axis_res_head[-1].weight)
++                nn.init.zeros_(self.axis_res_head[-1].bias)
++
++
+         if self.pred_mov_centers:
+             self.mov_center_head = nn.Sequential(
+                 nn.Linear(hidden_dim, hidden_dim),
+@@ -504,8 +603,88 @@ class Mask3D(nn.Module):
+ 
+         return pos_encodings_pcd
+     
+-    def articulation_forward(self, queries, outputs_mask, 
+-                             arti_features=None, 
++    def _origin_attention(self, arti_features, coordinates, queries, feature_masks):
++        """Query-conditioned softmax weights over each query's masked points.
++
++        Returns (batch, point_num, num_query) rows that sum to 1 over the points
++        of the mask. Zero logits give 1/N on every masked point, which is exactly
++        the mean the stock head takes -- origin_attn_out and origin_attn_bias are
++        zero-initialised so a finetune starts numerically at the baseline.
++
++        Only (batch, point_num, num_query) tensors are ever materialised, never
++        the (batch, point_num, num_query, 3) one that OOMs a 24 GB card.
++        """
++        pt_in = torch.cat([arti_features, coordinates], dim=-1) # (b, n, D+3)
++        keys = self.origin_attn_out(self.origin_attn_key(pt_in)) # (b, n, d)
++        q = self.origin_attn_query(queries)                      # (b, q, d)
++        logits = torch.einsum("bnd,bqd->bnq", keys, q) \
++            / (self.origin_attn_dim ** 0.5 * self.origin_attn_temp)
++        logits = logits + self.origin_attn_bias(pt_in)           # (b, n, 1) broadcast
++        # -1e4 rather than -inf: a query with an empty mask would otherwise
++        # softmax NaN. Its output is overwritten with zeros by the caller.
++        logits = logits.float().masked_fill(~feature_masks, -1e4)
++        return torch.softmax(logits, dim=1).to(queries.dtype)
++
++    def _axis_bin_residual(self, feat, axis_free):
++        """Discrete anchor choice + in-bin residual, replacing free regression.
++
++        Diagnosis: 93.3% of matched rotation GT axes are within 15 deg of gravity,
++        so a 1-cos regression collapses onto z and every one of the 8 lateral
++        hinges fails by 85-90 deg -- the trivial "always z" baseline beats the
++        model 9 losses to 0 wins. A discrete choice cannot produce the averaged
++        compromise direction that regression settles into.
++
++        Two anchors: gravity, and the free axis flattened into the ground plane.
++        96.4% of GT axes lie within 5 deg of canonical -- rotation overwhelmingly
++        vertical, translation horizontal -- but translation azimuth is arbitrary,
++        so the horizontal anchor is data-dependent rather than a fixed grid.
++        analysis/pp_sweep3.py replays each candidate anchor set as a pure
++        post-process: {z + 4 azimuths} 0.4485, {z + 8 azimuths} 0.4655,
++        {gravity, own-horizontal} 0.4677 AP50_axis, against 0.4432 for no snap.
++
++        Warm start: the logits are biased by the agreement between each anchor and
++        the *existing* free-regression axis, and both new heads are zero
++        initialised, so at load time this reproduces that 0.4677 rule exactly.
++        Training can then override it.
++
++        Selection is argmax in the forward pass with a straight-through gradient,
++        so the existing metric-aligned cosine loss trains the classifier without
++        any change to criterion.py.
++        """
++        free = F.normalize(axis_free.detach(), dim=-1)               # (b, q, 3)
++        up = torch.tensor([0.0, 0.0, 1.0], device=free.device, dtype=free.dtype)
++
++        # anchor 0 = gravity; anchor 1 = the free axis flattened into the ground
++        # plane, which keeps its azimuth exactly instead of quantising it
++        flat = free - free[..., 2:3] * up
++        flat = torch.where(flat.norm(dim=-1, keepdim=True) > 1e-4,
++                           F.normalize(flat, dim=-1), free)
++        anchors = torch.stack([up.expand_as(free), flat], dim=-2)    # (b, q, 2, 3)
++
++        res = self.axis_res_head(feat).view(*feat.shape[:2], 2, 3)
++        if self.axis_res_scale > 0:
++            # An unbounded residual makes normalize(anchor + res) able to point
++            # anywhere, which quietly turns the head back into the free
++            # regression the anchors exist to replace. Bounding it to
++            # axis_res_scale keeps the correction inside the bin
++            # (0.3 -> about 17 deg).
++            res = self.axis_res_scale * torch.tanh(res)
++        cands = F.normalize(anchors + res, dim=-1)                   # (b, q, 2, 3)
++
++        # |cos| to each anchor: a sharp prior that makes the untrained classifier
++        # reproduce "snap to gravity or to the horizontal plane, whichever is
++        # closer", the best of the training-free axis rules
++        prior = self.axis_prior_temp * torch.einsum(
++            "bqad,bqd->bqa", anchors, free).abs()
++        logits = prior + self.axis_cls_head(feat)                    # (b, q, 2)
++
++        p = torch.softmax(logits, dim=-1)
++        hard = F.one_hot(logits.argmax(dim=-1), 2).to(p.dtype)
++        w = hard + p - p.detach()                                    # straight-through
++        return torch.einsum("bqa,bqad->bqd", w, cands)
++
++    def articulation_forward(self, queries, outputs_mask,
++                             arti_features=None,
+                              output_class=None):
+         outputs_origins, outputs_axises = None, None
+         if self.predict_articulation_mode == 0: 
+@@ -556,31 +735,57 @@ class Mask3D(nn.Module):
+                 num_masked_points = mask_expanded.sum(dim=1) # (batch_size, num_query, 1)
+                 batch_size, num_points, num_queries = feature_masks.shape
+ 
+-            if self.pointwise_origin:
+-                origin_features = self.origin_embed_head(arti_features) # (batch_size, point_num, D_hidden)
+-                origin_features= origin_features.unsqueeze(2) # (batch_size, point_num, 1, 3)
+-                origin_features = origin_features.expand(-1, -1, num_queries, -1) # (batch_size, point_num, num_queries, 3)
+-                masked_origin_features = (origin_features + coordinates_expanded) * mask_expanded # (batch_size, point_num, num_query, 3)
+-                outputs_origins = masked_origin_features.sum(dim=1) / ( num_masked_points + 1e-6) # (batch_size, num_query, 3)
++            # The per-query mean over masked points is just mask^T @ per_point.
++            # Writing it as expand + multiply + sum materialises a
++            # (batch, point_num, num_query, 3) tensor -- ~120 MB at 100k points
++            # and 100 queries -- twice, and training keeps both alive for
++            # backward, which OOMs a 24 GB card. The einsum below is
++            # mathematically identical but only ever holds (batch, point_num,
++            # num_query) and (batch, point_num, 3).
++            if self.pointwise_origin or self.pointwise_axis:
++                mask_f = feature_masks.to(queries.dtype) # (batch_size, point_num, num_query)
+                 num_masked_points_sq = num_masked_points.squeeze(-1) # (batch_size, num_query)
++
++            if self.pointwise_origin:
++                origin_features = self.origin_embed_head(arti_features) # (batch_size, point_num, 3)
++                # offset + point coordinate, independent of the query
++                origin_per_point = origin_features + coordinates # (batch_size, point_num, 3)
++                if self.origin_agg == "attn":
++                    weights = self._origin_attention(
++                        arti_features, coordinates, queries, feature_masks)
++                    outputs_origins = torch.einsum(
++                        "bnq,bnd->bqd", weights, origin_per_point) # (batch_size, num_query, 3)
++                else:
++                    outputs_origins = torch.einsum(
++                        "bnq,bnd->bqd", mask_f, origin_per_point
++                    ) / (num_masked_points + 1e-6) # (batch_size, num_query, 3)
+                 outputs_origins[num_masked_points_sq < 0.5] = torch.zeros(3, device=queries.device).float()
+             else:
+                 outputs_origins = self.origin_embed_head(queries) # (batch_size, num_query, 3)
+-                
++
+             # set origin and axis of queries without any points to zero
+             if self.pointwise_axis:
+-                axis_features = self.axis_embed_head(arti_features) # (batch_size, point_num, D_hidden)
+-                axis_features = axis_features.unsqueeze(2) # (batch_size, point_num, 1, 3)
+-                axis_features = axis_features.expand(-1, -1, num_queries, -1) # (batch_size, point_num, num_queries, 3)
+-                masked_axis_features = axis_features * mask_expanded # (batch_size, point_num, num_query, 3)
+-                num_masked_points_sq = num_masked_points.squeeze(-1) # (batch_size, num_query)
++                axis_features = self.axis_embed_head(arti_features) # (batch_size, point_num, 3)
+                 # calculate mean of origin and axis, masked by feature_masks
+-                outputs_axises = masked_axis_features.sum(dim=1) / ( num_masked_points + 1e-6) \
+-                    + self.axis_embed_head_query(queries) # (batch_size, num_query, 3) 
+-                outputs_axises[num_masked_points_sq < 0.5] = torch.tensor([0, 0, 1], device=queries.device).float()  
++                outputs_axises = torch.einsum(
++                    "bnq,bnd->bqd", mask_f, axis_features
++                ) / (num_masked_points + 1e-6) \
++                    + self.axis_embed_head_query(queries) # (batch_size, num_query, 3)
++                outputs_axises[num_masked_points_sq < 0.5] = torch.tensor([0, 0, 1], device=queries.device).float()
+             else:
+                 outputs_axises = self.axis_embed_head(queries)
+-            
++
++            if self.axis_bin_residual:
++                # mask-pooled point context + query, as in the origin branch
++                pooled = torch.einsum("bnq,bnd->bqd", mask_f, arti_features) \
++                    / (num_masked_points + 1e-6) # (batch_size, num_query, D)
++                outputs_axises = self._axis_bin_residual(
++                    torch.cat([queries, pooled], dim=-1), outputs_axises)
++                outputs_axises = torch.where(
++                    (num_masked_points_sq < 0.5)[..., None],
++                    torch.tensor([0., 0., 1.], device=queries.device),
++                    outputs_axises)
++
+             # batch_size, num_queries = queries.shape[:2]
+             # outputs_origins= torch.zeros((batch_size, num_queries, 3), device=queries.device)
+             # outputs_axises = torch.zeros((batch_size, num_queries, 3), device=queries.device)
+diff --git a/trainer/trainer.py b/trainer/trainer.py
+index ff88c60..4567108 100644
+--- a/trainer/trainer.py
++++ b/trainer/trainer.py
+@@ -20,6 +20,7 @@ from datasets.scannet200.scannet200_splits import (
+ )
+ 
+ import hydra
++from omegaconf import OmegaConf
+ import MinkowskiEngine as ME
+ import numpy as np
+ import pytorch_lightning as pl
+@@ -113,6 +114,84 @@ class InstanceSegmentation(pl.LightningModule):
+         self.optional_freeze = nullcontext
+         if config.general.freeze_backbone:
+             self.optional_freeze = torch.no_grad
++
++        self._freeze_bn = False
++
++        # Train ONLY the articulation heads. Everything upstream of them --
++        # backbone, transformer decoder, mask head, class head -- keeps the
++        # weights it was initialised with, so the segmentation output is
++        # bit-identical to the source checkpoint and AP50 cannot move. The
++        # diagnosis (docs/04-diagnosis.md) showed segmentation is already the
++        # best on the leaderboard while articulation is what loses points, so
++        # there is no reason to put AP50 at risk.
++        if config.general.get("freeze_except_articulation", False):
++            ARTI = ("origin_embed_head", "axis_embed_head", "axis_embed_head_query",
++                    "feature_arti_emb", "mov_center_head",
++                    # articulation head v2 (docs/06-finetune-design.md)
++                    "origin_attn_", "axis_cls_head", "axis_res_head")
++            # Narrower still: train the origin branch only. Letting the axis
++            # heads drift under the abs-cos loss measurably *cost* AP50_axis
++            # (0.4432 -> 0.4350 after 5 epochs) while origin was improving, and
++            # it confounds the ablation -- with this on, both the masks and the
++            # axes are bit-identical to the source checkpoint, so any change in
++            # AP50_axis_origin is attributable to the origin aggregation alone.
++            # feature_arti_emb is frozen too: it feeds the axis branch as well.
++            if config.general.get("train_origin_only", False):
++                ARTI = ("origin_embed_head", "origin_attn_")
++            # v4: origin branch + the axis bin/residual heads, but keep the
++            # *free-regression* axis heads (axis_embed_head, axis_embed_head_query,
++            # feature_arti_emb) frozen. The bin head's anchors are computed from
++            # the free axis, so freezing it keeps the anchor input at source
++            # checkpoint quality and the zero-init warm start (= the 0.4677
++            # canonical-snap rule) exact at load time; only the classifier and
++            # the bounded residual learn on top of it.
++            if config.general.get("train_heads_v2", False):
++                ARTI = ("origin_embed_head", "origin_attn_",
++                        "axis_cls_head", "axis_res_head")
++            # v5 stage A: ONLY the bounded in-bin residual learns. Anchor
++            # selection stays the zero-init prior rule (nearest anchor), origin
++            # stays at its v3-ep19 weights. One variable at a time -- v4 trained
++            # cls+res+origin under doubled rebalancing and collapsed from 0.3743
++            # to 0.089 (docs/06 section 12).
++            if config.general.get("train_axis_res_only", False):
++                ARTI = ("axis_res_head",)
++            # Stage B: ONLY the anchor classifier learns -- the one head that can
++            # rescue lateral hinges (the bin prior snaps them all to gravity).
++            # Res stays zero (so at load time axes equal the snap rule exactly)
++            # and origin stays at ep19. Single-layer rebalance only (loss weight,
++            # no hbal DB) -- v4 proved stacking both overshoots the prior.
++            if config.general.get("train_axis_cls_only", False):
++                ARTI = ("axis_cls_head",)
++            n_train = n_frozen = 0
++            for name, p in self.model.named_parameters():
++                if any(k in name for k in ARTI):
++                    n_train += p.numel()
++                else:
++                    p.requires_grad_(False)
++                    n_frozen += p.numel()
++            print(f"[freeze_except_articulation] trainable {n_train:,} / "
++                  f"frozen {n_frozen:,} ({100*n_train/(n_train+n_frozen):.2f}% trainable)"
++                  f"{'  [train_origin_only]' if config.general.get('train_origin_only', False) else ''}")
++            assert n_train > 0, "no articulation parameters matched -- check ARTI names"
++            # requires_grad_(False) does NOT stop BatchNorm from updating its
++            # running_mean/running_var: those are buffers, refreshed by the
++            # forward pass whenever the module is in train() mode. Measured on
++            # results/v2_origin_only @ep4 (analysis/check_ckpt_diff.py): 186 BN
++            # buffers had moved, bn0.running_mean by 66%, while every non-origin
++            # *learnable* tensor was bit-identical. That silently breaks the two
++            # guarantees this whole setup is built on --
++            #   (a) inference uses the running stats, so the backbone features,
++            #       pred_masks and pred_axises all change => AP50 / AP50_axis are
++            #       NOT frozen and the origin ablation is confounded;
++            #   (b) the stats drift towards 4 m-crop statistics while inference
++            #       runs on whole scenes, i.e. straight into a train/test
++            #       mismatch.
++            # Keeping the frozen BN modules in eval() fixes both: the forward
++            # uses the source checkpoint's running stats (so training-time
++            # features equal inference-time features) and the buffers stay put.
++            # self.train() is re-applied by Lightning every epoch, hence the
++            # train() override below rather than a one-shot .eval() here.
++            self._freeze_bn = True
+         # loss
+         self.ignore_label = config.data.ignore_label
+ 
+@@ -195,6 +274,28 @@ class InstanceSegmentation(pl.LightningModule):
+     def lr_scheduler_step(self, scheduler, optimizer_idx, metric=None):
+         scheduler.step()
+ 
++    def train(self, mode: bool = True):
++        """Keep every BatchNorm in eval() when the backbone is frozen.
++
++        Lightning calls .train() at the start of each training epoch, which
++        would put the BN modules back into training mode and let them refresh
++        running_mean / running_var -- see the note in __init__. None of the
++        articulation heads contain a BN (they are Linear/ReLU MLPs), so
++        blanket-freezing every _BatchNorm is exactly the intended behaviour.
++        """
++        super().train(mode)
++        if mode and getattr(self, "_freeze_bn", False):
++            n = 0
++            for m in self.model.modules():
++                if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
++                    m.eval()
++                    n += 1
++            if not getattr(self, "_freeze_bn_logged", False):
++                print(f"[freeze_bn] {n} BatchNorm modules pinned to eval() "
++                      f"(running stats frozen, forward uses source-ckpt stats)")
++                self._freeze_bn_logged = True
++        return self
++
+     def training_step(self, batch, batch_idx):
+         data, target, file_names = batch
+         
+@@ -1641,6 +1742,19 @@ class InstanceSegmentation(pl.LightningModule):
+         
+ 
+     def eval_instance_epoch_end(self, mode):
++        # Dump predictions FIRST. The AP block below can take minutes and can
++        # die quietly (hydra's broken print_exception masks errors); the
++        # flip-TTA run lost its preds exactly this way -- eval ran against
++        # mirrored GT and the dump at the tail was never reached.
++        if self.debug:
++            import pickle
++            _sd = os.path.join(self.config.general.save_dir, "debug", "val_preds")
++            os.makedirs(_sd, exist_ok=True)
++            _pf = os.path.join(_sd, "preds.pkl")
++            print(f"saving predictions to {_pf} (early dump) ...", flush=True)
++            with open(_pf, "wb") as f:
++                pickle.dump(self.preds, f)
++
+         dataset_evaled = None
+         if mode == 'test':
+             dataset_evaled = self.test_dataset
+@@ -2000,16 +2114,47 @@ class InstanceSegmentation(pl.LightningModule):
+         self.log_dict(dd, on_epoch=True)
+ 
+     def configure_optimizers(self):
+-        optimizer = hydra.utils.instantiate(
+-            self.config.optimizer, params=self.parameters()
+-        )
++        # Discriminative learning rates. The articulation head v2 modules start
++        # from a deliberate zero init (so the finetune begins numerically at the
++        # baseline) and have to travel, while origin_embed_head / axis_embed_head
++        # are already converged and only need nudging. Giving the new modules a
++        # larger step is the standard "new head, pretrained trunk" recipe and
++        # keeps the pretrained heads from being knocked off their optimum.
++        mult = float(self.config.general.get("new_head_lr_mult", 1.0))
++        NEW = ("origin_attn_", "axis_cls_head", "axis_res_head")
++        if mult != 1.0:
++            new_p, old_p = [], []
++            for name, p in self.model.named_parameters():
++                (new_p if any(k in name for k in NEW) else old_p).append(p)
++            params = [{"params": old_p}, {"params": new_p}]
++            print(f"[new_head_lr_mult] {len(new_p)} new tensors at {mult}x lr, "
++                  f"{len(old_p)} at 1x")
++        else:
++            params = self.parameters()
++        optimizer = hydra.utils.instantiate(self.config.optimizer, params=params)
+         if "steps_per_epoch" in self.config.scheduler.scheduler.keys():
+             self.config.scheduler.scheduler.steps_per_epoch = len(
+                 self.train_dataloader()
+             )
+-        lr_scheduler = hydra.utils.instantiate(
+-            self.config.scheduler.scheduler, optimizer=optimizer
+-        )
++        if mult != 1.0 and "max_lr" in self.config.scheduler.scheduler.keys():
++            # OneCycleLR broadcasts a scalar max_lr over every param group, which
++            # would silently erase the multiplier -- pass one value per group.
++            #
++            # It has to be a plain Python list: writing it back into the config
++            # makes it a ListConfig, and OneCycleLR then dies on `max_lr / float`
++            # inside HydraException. Build the scheduler by hand in this branch
++            # and leave the untouched hydra path for mult == 1.0.
++            sched_cfg = OmegaConf.to_container(
++                self.config.scheduler.scheduler, resolve=True)
++            target = sched_cfg.pop("_target_")
++            base = float(sched_cfg["max_lr"])
++            sched_cfg["max_lr"] = [base, base * mult]
++            lr_scheduler = hydra.utils.get_class(target)(
++                optimizer=optimizer, **sched_cfg)
++        else:
++            lr_scheduler = hydra.utils.instantiate(
++                self.config.scheduler.scheduler, optimizer=optimizer
++            )
+         scheduler_config = {"scheduler": lr_scheduler}
+         scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
+         return [optimizer], [scheduler_config]
+diff --git a/utils/utils.py b/utils/utils.py
+index 623380a..175a89f 100644
+--- a/utils/utils.py
++++ b/utils/utils.py
+@@ -33,13 +33,13 @@ def load_baseline_model(cfg, model):
+     cfg.data.test_dataset.color_mean_std = [(0.5, 0.5, 0.5), (1, 1, 1)]
+     cfg.data.voxel_size = 0.02
+     model = model(cfg)
+-    state_dict = torch.load(cfg.general.checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.checkpoint, weights_only=False)["state_dict"]
+     model.model.load_state_dict(state_dict)
+     return cfg, model
+ 
+ 
+ def load_backbone_checkpoint_with_missing_or_exsessive_keys(cfg, model):
+-    state_dict = torch.load(cfg.general.backbone_checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.backbone_checkpoint, weights_only=False)["state_dict"]
+     correct_dict = dict(model.state_dict())
+ 
+     # if parametrs not found in checkpoint they will be randomly initialized
+@@ -50,7 +50,7 @@ def load_backbone_checkpoint_with_missing_or_exsessive_keys(cfg, model):
+             )
+ 
+     # if parametrs have different shape, it will randomly initialize
+-    state_dict = torch.load(cfg.general.backbone_checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.backbone_checkpoint, weights_only=False)["state_dict"]
+     correct_dict = dict(model.state_dict())
+     for key in correct_dict.keys():
+         if key.replace("model.backbone.", "") not in state_dict:
+@@ -81,7 +81,7 @@ def load_backbone_checkpoint_with_missing_or_exsessive_keys(cfg, model):
+     return cfg, model
+ 
+ def load_interaction_backbone_from_checkpoint(cfg, model):
+-    state_dict = torch.load(cfg.general.interaction_backbone_checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.interaction_backbone_checkpoint, weights_only=False)["state_dict"]
+     correct_dict = dict(model.state_dict())
+ 
+     # if parametrs not found in checkpoint they will be randomly initialized
+@@ -94,7 +94,7 @@ def load_interaction_backbone_from_checkpoint(cfg, model):
+                 )
+ 
+     # if parametrs have different shape, it will randomly initialize
+-    # state_dict = torch.load(cfg.general.interaction_backbone_checkpoint)["state_dict"]
++    # state_dict = torch.load(cfg.general.interaction_backbone_checkpoint, weights_only=False)["state_dict"]
+     # correct_dict = dict(model.state_dict())
+     for key_correct in correct_dict.keys():
+         if "model.interaction_backbone." in key_correct:
+@@ -127,7 +127,7 @@ def load_interaction_backbone_from_checkpoint(cfg, model):
+ 
+ 
+ def load_checkpoint_with_missing_or_exsessive_keys(cfg, model):
+-    state_dict = torch.load(cfg.general.checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.checkpoint, weights_only=False)["state_dict"]
+     correct_dict = dict(model.state_dict())
+ 
+     # if parametrs not found in checkpoint they will be randomly initialized
+@@ -138,7 +138,7 @@ def load_checkpoint_with_missing_or_exsessive_keys(cfg, model):
+             )
+ 
+     # if parametrs have different shape, it will randomly initialize
+-    state_dict = torch.load(cfg.general.checkpoint)["state_dict"]
++    state_dict = torch.load(cfg.general.checkpoint, weights_only=False)["state_dict"]
+     correct_dict = dict(model.state_dict())
+     for key in correct_dict.keys():
+         if key not in state_dict:

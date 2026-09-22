@@ -1,0 +1,16 @@
+# data / checkpoints / predictions never go in this repo
+*.ckpt
+*.pth
+*.pkl
+*.npy
+*.npz
+*.ply
+*.zip
+*.log
+__pycache__/
+*.pyc
+.venv/
+# upstream USDNet is fetched by usdnet_patch/setup_usdnet.sh, never committed
+USDNet/
+# credentials
+*token*.txt

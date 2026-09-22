@@ -1,0 +1,601 @@
+{
+  "gt_stats": {
+    "n_scenes": 42,
+    "gt_txt_ids": 432,
+    "gt_valid": 390,
+    "gt_invalid_class": 42,
+    "gt_id_lt_1000": 0,
+    "gt_vert_lt_min_region": 0,
+    "gt_missing_h5": 0,
+    "h5_not_in_txt": 0,
+    "axis_zero": 0,
+    "axis_nan": 0,
+    "origin_nan": 0,
+    "axis_nonunit": 0,
+    "per_class": {
+      "rotation": 236,
+      "translation": 154
+    },
+    "empty_scenes": [
+      "a980334473"
+    ],
+    "mask_space_mismatch": 0,
+    "min_gt_verts": {},
+    "exactly_axis_aligned": {
+      "rotation": 206
+    },
+    "axis_norm_range": [
+      0.9999999999999998,
+      1.0000000000000002
+    ],
+    "axis_norm_exactly_1": 362
+  },
+  "a_gt_all_conf1": {
+    "AP50": 1.0,
+    "AP50_mAP": 1.0,
+    "AP50::rotation": 1.0,
+    "AP50::translation": 1.0,
+    "AP50_axis": 0.6515728199910952,
+    "AP50_axis_mAP": 0.6515728199910952,
+    "AP50_axis::rotation": 0.9354037044983194,
+    "AP50_axis::translation": 0.36774193548387096,
+    "AP50_origin": 1.0,
+    "AP50_origin_mAP": 1.0,
+    "AP50_origin::rotation": 1.0,
+    "AP50_origin::translation": 1.0,
+    "AP50_axis_origin": 0.6515728199910952,
+    "AP50_axis_origin_mAP": 0.6515728199910952,
+    "AP50_axis_origin::rotation": 0.9354037044983194,
+    "AP50_axis_origin::translation": 0.36774193548387096,
+    "_probe": {
+      "n_calls": 15600,
+      "max_dev": 1.0000000000000002,
+      "instances_nan_gt_loop_FN": {
+        "rotation": 10.0,
+        "translation": 78.0
+      },
+      "instances_nan_pred_loop_FP": {
+        "rotation": 11.0,
+        "translation": 79.0
+      }
+    }
+  },
+  "b_gt_all_conf_random": {
+    "AP50": 1.0,
+    "AP50_mAP": 1.0,
+    "AP50::rotation": 1.0,
+    "AP50::translation": 1.0,
+    "AP50_axis": 0.5716814983233796,
+    "AP50_axis_mAP": 0.5716814983233796,
+    "AP50_axis::rotation": 0.9207995727074272,
+    "AP50_axis::translation": 0.22256342393933204,
+    "AP50_origin": 1.0,
+    "AP50_origin_mAP": 1.0,
+    "AP50_origin::rotation": 1.0,
+    "AP50_origin::translation": 1.0,
+    "AP50_axis_origin": 0.5716814983233796,
+    "AP50_axis_origin_mAP": 0.5716814983233796,
+    "AP50_axis_origin::rotation": 0.9207995727074272,
+    "AP50_axis_origin::translation": 0.22256342393933204,
+    "_probe": {
+      "n_calls": 15600,
+      "max_dev": 1.0000000000000002,
+      "instances_nan_gt_loop_FN": {
+        "rotation": 10.0,
+        "translation": 78.0
+      },
+      "instances_nan_pred_loop_FP": {
+        "rotation": 11.0,
+        "translation": 79.0
+      }
+    }
+  },
+  "b2_gt_all_conf_descending": {
+    "AP50": 1.0,
+    "AP50_mAP": 1.0,
+    "AP50::rotation": 1.0,
+    "AP50::translation": 1.0,
+    "AP50_axis": 0.589348853053889,
+    "AP50_axis_mAP": 0.589348853053889,
+    "AP50_axis::rotation": 0.9301367003687817,
+    "AP50_axis::translation": 0.24856100573899612,
+    "AP50_origin": 1.0,
+    "AP50_origin_mAP": 1.0,
+    "AP50_origin::rotation": 1.0,
+    "AP50_origin::translation": 1.0,
+    "AP50_axis_origin": 0.589348853053889,
+    "AP50_axis_origin_mAP": 0.589348853053889,
+    "AP50_axis_origin::rotation": 0.9301367003687817,
+    "AP50_axis_origin::translation": 0.24856100573899612,
+    "_probe": {
+      "n_calls": 15600,
+      "max_dev": 1.0000000000000002,
+      "instances_nan_gt_loop_FN": {
+        "rotation": 10.0,
+        "translation": 78.0
+      },
+      "instances_nan_pred_loop_FP": {
+        "rotation": 11.0,
+        "translation": 79.0
+      }
+    }
+  },
+  "h5_pr_mechanics": {
+    "100 TP, one score, no FN/FP": 1.0,
+    "100 TP, random scores": 1.0,
+    "99 TP + 1 hard FN, one score": 0.99,
+    "99 TP + 1 FP, one score": 0.995,
+    "99 TP + 1 FP + 1 hard FN": 0.98505
+  },
+  "a_gt_all_conf1_CLIPPED": {
+    "AP50": 1.0,
+    "AP50_mAP": 1.0,
+    "AP50::rotation": 1.0,
+    "AP50::translation": 1.0,
+    "AP50_axis": 1.0,
+    "AP50_axis_mAP": 1.0,
+    "AP50_axis::rotation": 1.0,
+    "AP50_axis::translation": 1.0,
+    "AP50_origin": 1.0,
+    "AP50_origin_mAP": 1.0,
+    "AP50_origin::rotation": 1.0,
+    "AP50_origin::translation": 1.0,
+    "AP50_axis_origin": 1.0,
+    "AP50_axis_origin_mAP": 1.0,
+    "AP50_axis_origin::rotation": 1.0,
+    "AP50_axis_origin::translation": 1.0
+  },
+  "axis_representation_sensitivity": {
+    "raw": {
+      "MAO_ST": 0.6515728199910952,
+      "AP50": 1.0,
+      "rot": 0.9354037044983194,
+      "tr": 0.36774193548387096,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 10.0,
+          "translation": 78.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 11.0,
+          "translation": 79.0
+        }
+      }
+    },
+    "norm64": {
+      "MAO_ST": 0.6504843319851923,
+      "AP50": 1.0,
+      "rot": 0.9396364477994588,
+      "tr": 0.36133221617092587,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 9.0,
+          "translation": 79.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 11.0,
+          "translation": 80.0
+        }
+      }
+    },
+    "f32": {
+      "MAO_ST": 0.7368232494655593,
+      "AP50": 1.0,
+      "rot": 0.9170063648716299,
+      "tr": 0.5566401340594889,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 13.0,
+          "translation": 51.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 14.0,
+          "translation": 52.0
+        }
+      }
+    },
+    "f16": {
+      "MAO_ST": 1.0,
+      "AP50": 1.0,
+      "rot": 1.0,
+      "tr": 1.0,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0,
+        "instances_nan_gt_loop_FN": {},
+        "instances_nan_pred_loop_FP": {}
+      }
+    },
+    "dec3": {
+      "MAO_ST": 1.0,
+      "AP50": 1.0,
+      "rot": 1.0,
+      "tr": 1.0,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0,
+        "instances_nan_gt_loop_FN": {},
+        "instances_nan_pred_loop_FP": {}
+      }
+    },
+    "dec4": {
+      "MAO_ST": 1.0,
+      "AP50": 1.0,
+      "rot": 1.0,
+      "tr": 1.0,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0,
+        "instances_nan_gt_loop_FN": {},
+        "instances_nan_pred_loop_FP": {}
+      }
+    },
+    "dec5": {
+      "MAO_ST": 1.0,
+      "AP50": 1.0,
+      "rot": 1.0,
+      "tr": 1.0,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0,
+        "instances_nan_gt_loop_FN": {},
+        "instances_nan_pred_loop_FP": {}
+      }
+    },
+    "dec6": {
+      "MAO_ST": 0.9951404115365154,
+      "AP50": 1.0,
+      "rot": 1.0,
+      "tr": 0.9902808230730309,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "translation": 1.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "translation": 1.0
+        }
+      }
+    },
+    "dec7": {
+      "MAO_ST": 0.9742690146993657,
+      "AP50": 1.0,
+      "rot": 0.9936530451019823,
+      "tr": 0.9548849842967491,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 1.0,
+          "translation": 5.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 1.0,
+          "translation": 4.0
+        }
+      }
+    },
+    "dec8": {
+      "MAO_ST": 0.6718480920873742,
+      "AP50": 1.0,
+      "rot": 0.9212362911266201,
+      "tr": 0.42245989304812837,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 12.0,
+          "translation": 70.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 14.0,
+          "translation": 69.0
+        }
+      }
+    },
+    "dec9": {
+      "MAO_ST": 0.6281562503800479,
+      "AP50": 1.0,
+      "rot": 0.9006032749209997,
+      "tr": 0.355709225839096,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 16.0,
+          "translation": 80.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 16.0,
+          "translation": 80.0
+        }
+      }
+    },
+    "dec10": {
+      "MAO_ST": 0.5854214514336531,
+      "AP50": 1.0,
+      "rot": 0.8885018672795173,
+      "tr": 0.28234103558778884,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 18.0,
+          "translation": 92.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 18.0,
+          "translation": 92.0
+        }
+      }
+    },
+    "dec11": {
+      "MAO_ST": 0.5741226216171833,
+      "AP50": 1.0,
+      "rot": 0.8722502704652002,
+      "tr": 0.27599497276916635,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 21.0,
+          "translation": 93.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 20.0,
+          "translation": 94.0
+        }
+      }
+    },
+    "dec12": {
+      "MAO_ST": 0.6015372250595152,
+      "AP50": 1.0,
+      "rot": 0.8969520011394387,
+      "tr": 0.30612244897959184,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 16.0,
+          "translation": 88.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 18.0,
+          "translation": 88.0
+        }
+      }
+    },
+    "dec13": {
+      "MAO_ST": 0.6431768808519094,
+      "AP50": 1.0,
+      "rot": 0.925021545532893,
+      "tr": 0.36133221617092587,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000004,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 12.0,
+          "translation": 79.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 12.0,
+          "translation": 80.0
+        }
+      }
+    },
+    "dec14": {
+      "MAO_ST": 0.6139629965257513,
+      "AP50": 1.0,
+      "rot": 0.9109096760351856,
+      "tr": 0.317016317016317,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 14.0,
+          "translation": 86.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 15.0,
+          "translation": 88.0
+        }
+      }
+    },
+    "dec15": {
+      "MAO_ST": 0.6276596844868673,
+      "AP50": 1.0,
+      "rot": 0.9066809106578568,
+      "tr": 0.34863845831587764,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 15.0,
+          "translation": 81.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 15.0,
+          "translation": 82.0
+        }
+      }
+    },
+    "dec16": {
+      "MAO_ST": 0.6506135969970274,
+      "AP50": 1.0,
+      "rot": 0.9334852585101837,
+      "tr": 0.36774193548387096,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 10.0,
+          "translation": 78.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 12.0,
+          "translation": 79.0
+        }
+      }
+    },
+    "dec17": {
+      "MAO_ST": 0.6515728199910952,
+      "AP50": 1.0,
+      "rot": 0.9354037044983194,
+      "tr": 0.36774193548387096,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000000000002,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 10.0,
+          "translation": 78.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 11.0,
+          "translation": 79.0
+        }
+      }
+    },
+    "raw_stored_f32": {
+      "MAO_ST": 0.5056168103172808,
+      "AP50": 1.0,
+      "rot": 0.8764722780810112,
+      "tr": 0.13476134255355035,
+      "probe": {
+        "n_calls": 15600,
+        "max_dev": 1.0000000599967267,
+        "instances_nan_gt_loop_FN": {
+          "rotation": 20.0,
+          "translation": 120.0
+        },
+        "instances_nan_pred_loop_FP": {
+          "rotation": 20.0,
+          "translation": 120.0
+        }
+      }
+    }
+  },
+  "c_gtmask_gtclass_predarti": {
+    "AP50": 1.0,
+    "AP50_mAP": 1.0,
+    "AP50::rotation": 1.0,
+    "AP50::translation": 1.0,
+    "AP50_axis": 0.6611686472922982,
+    "AP50_axis_mAP": 0.6611686472922983,
+    "AP50_axis::rotation": 0.7942760700948004,
+    "AP50_axis::translation": 0.528061224489796,
+    "AP50_origin": 0.7432715096236714,
+    "AP50_origin_mAP": 0.7432715096236714,
+    "AP50_origin::rotation": 0.4865430192473428,
+    "AP50_origin::translation": 1.0,
+    "AP50_axis_origin": 0.42274937122220335,
+    "AP50_axis_origin_mAP": 0.42274937122220335,
+    "AP50_axis_origin::rotation": 0.3174375179546107,
+    "AP50_axis_origin::translation": 0.528061224489796
+  },
+  "d_predmask_gtarti": {
+    "AP50": 0.5715606675842951,
+    "AP50_mAP": 0.30104146553332234,
+    "AP50::rotation": 0.7141251508397704,
+    "AP50::translation": 0.4289961843288199,
+    "AP50_axis": 0.3859606431113025,
+    "AP50_axis_mAP": 0.21473873264106355,
+    "AP50_axis::rotation": 0.6258883342236548,
+    "AP50_axis::translation": 0.14603295199895033,
+    "AP50_origin": 0.5472655107743604,
+    "AP50_origin_mAP": 0.2931739669059577,
+    "AP50_origin::rotation": 0.6655348372199008,
+    "AP50_origin::translation": 0.4289961843288199,
+    "AP50_axis_origin": 0.3510845032119976,
+    "AP50_axis_origin_mAP": 0.2003671576129527,
+    "AP50_axis_origin::rotation": 0.5561360544250449,
+    "AP50_axis_origin::translation": 0.14603295199895033,
+    "_n_replaced": 275
+  },
+  "model_baseline": {
+    "AP50": 0.5715606675842951,
+    "AP50_mAP": 0.30104146553332234,
+    "AP50::rotation": 0.7141251508397704,
+    "AP50::translation": 0.4289961843288199,
+    "AP50_axis": 0.4432176140781685,
+    "AP50_axis_mAP": 0.23434494968207512,
+    "AP50_axis::rotation": 0.5754755980969845,
+    "AP50_axis::translation": 0.31095963005935257,
+    "AP50_origin": 0.4495443578594219,
+    "AP50_origin_mAP": 0.23946794216720912,
+    "AP50_origin::rotation": 0.4700925313900238,
+    "AP50_origin::translation": 0.4289961843288199,
+    "AP50_axis_origin": 0.32152783540209395,
+    "AP50_axis_origin_mAP": 0.17295685510725067,
+    "AP50_axis_origin::rotation": 0.3320960407448353,
+    "AP50_axis_origin::translation": 0.31095963005935257
+  },
+  "queryslot_oracles": {
+    "raw_keepother0": {
+      "AP50": 0.9082379484921858,
+      "MAO_ST": 0.6225907598939635,
+      "rot": 0.9204047340736412,
+      "tr": 0.3247767857142857,
+      "n_pred": 360,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    },
+    "raw_keepother1": {
+      "AP50": 0.9099990464481567,
+      "MAO_ST": 0.6568345052818572,
+      "rot": 0.9322622770446456,
+      "tr": 0.38140673351906873,
+      "n_pred": 4100,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    },
+    "dec6_keepother0": {
+      "AP50": 0.9082379484921858,
+      "MAO_ST": 0.9033804029369659,
+      "rot": 0.9788135593220338,
+      "tr": 0.8279472465518978,
+      "n_pred": 360,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    },
+    "dec6_keepother1": {
+      "AP50": 0.9099990464481567,
+      "MAO_ST": 0.9052223730988844,
+      "rot": 0.9788135593220338,
+      "tr": 0.8316311868757351,
+      "n_pred": 4100,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    },
+    "f16_keepother0": {
+      "AP50": 0.9082379484921858,
+      "MAO_ST": 0.9082379484921858,
+      "rot": 0.9788135593220338,
+      "tr": 0.8376623376623377,
+      "n_pred": 360,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    },
+    "f16_keepother1": {
+      "AP50": 0.9099990464481567,
+      "MAO_ST": 0.9082379484921858,
+      "rot": 0.9788135593220338,
+      "tr": 0.8376623376623377,
+      "n_pred": 4100,
+      "n_gt": 390,
+      "gt_no_pred": 30,
+      "collisions": 30
+    }
+  }
+}
