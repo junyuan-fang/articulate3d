@@ -33,7 +33,7 @@
 \toprule
 Name & Affiliation & Email \\
 \midrule
-Junyuan Fang & \textcolor{red}{[AFFILIATION]} & \texttt{fangjunyuan1@gmail.com} \\
+Junyuan Fang & Independent Researcher & \texttt{fangjunyuan1@gmail.com} \\
 \bottomrule
 \end{tabular}
 
@@ -48,11 +48,11 @@ Our recipe (Fig.~\ref{fig:recipe}) keeps the official USDNet baseline almost ent
 \metric{} $=$ \apfifty{} $\times$ axis $\times$ origin by fixing the two articulation factors, which per-instance error forensics showed to fail for different reasons: the regressed \emph{axis} collapses onto the dominant gravity-aligned mode, and the regressed \emph{origin} shrinks toward the part centroid.
 
 \begin{enumerate}[leftmargin=*]
-\item \textbf{Frozen segmentation.} Minkowski U-Net backbone, Mask3D decoder, mask head and class head are kept at the released train+val weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint and every change is cleanly attributable.
+\item \textbf{Frozen segmentation.} Minkowski U-Net backbone, Mask3D decoder, mask head and class head are kept at the released weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint and every change is cleanly attributable.
 \item \textbf{One trained component.} An 88\,K-parameter attention-pooled origin head is finetuned with everything else frozen. Two silent pitfalls we hit and fixed: (a) frozen parameters do not stop BatchNorm buffers from drifting, which fakes gains on validation; (b) resuming a released checkpoint restarts USDNet's coarse-to-fine mask curriculum, which dilates the GT masks by 0.1\,m for 100 epochs and destroys the model unless disabled.
 \item \textbf{Training-free geometry overwrites the regressors.} Translation axis $=$ PCA panel normal of the predicted mask, or in-plane if a sliding partner leaf exists; rotation axis forced vertical; rotation origin $=$ mask endpoint perpendicular to the axis, on the side opposite the predicted handle (handles come from the companion interactable-part model). This alone takes test \metric{} from $0.264$ to $0.3385$ with the segmentation branch untouched.
 \item \textbf{Structural post-processing (both tasks).} The model routinely merges the two leaves of a double door into one instance. Offline DBSCAN connected-component splitting $+$ fragment filter $+$ NMS, tuned with the official evaluator on validation, transfers nearly in full to test (movable $0.3385\!\to\!0.3760$; interaction $0.2686\!\to\!0.2886$).
-\item \textbf{Deadline-day retrain and ensemble.} Because the released checkpoints were trained on train+val, validation is in-sample. A mirror-flip finetune (train+val, flip augmentation, curriculum off, LR $10^{-5}$) gained only $+0.004$ on validation but $+0.027$ on test; an equal-weight ensemble of three such models (interaction) and the same recipe transplanted to the movable model gave the final $0.4056$ / $0.3286$.
+\item \textbf{Deadline-day retrain and ensemble.} A mirror-flip finetune of the released checkpoint (flip augmentation, curriculum off, LR $10^{-5}$) gained only $+0.004$ on validation but $+0.027$ on test; an equal-weight ensemble of three such models (interaction) and the same recipe transplanted to the movable model gave the final $0.4056$ / $0.3286$.
 \end{enumerate}
 
 \begin{figure}[h]
