@@ -1,8 +1,9 @@
+# Channel-migrated specification; Linux/CUDA rebuild not yet validated.
 name: usdnet
 channels:
   - conda-forge
-  - anaconda
   - nvidia/label/cuda-12.8.0
+  - nodefaults
 dependencies:
   - _openmp_mutex=4.5
   - alsa-lib=1.2.16.1

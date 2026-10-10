@@ -8,20 +8,18 @@ ENV PATH="/opt/conda/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}" \
     CUDA_HOME="/usr/local/cuda"
 
-# Install Miniconda
+# Install Miniforge (conda-forge only)
 RUN apt-get update && apt-get install -y \
     wget bzip2 git python3-pip python3-dev zip && \
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
-    bash /tmp/miniconda.sh -b -p /opt/conda && \
-    rm /tmp/miniconda.sh && \
+    wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p /opt/conda && \
+    rm /tmp/miniforge.sh && \
     apt-get clean
 
 # Set the default shell to use bash
 SHELL ["/bin/bash", "-c"]
 
-RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
+RUN conda config --system --set channel_priority strict
 
 # RUN git clone https://github.com/insait-institute/USDNet.git && cd USDNet
 # WORKDIR /USDNet
@@ -29,16 +27,16 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
 WORKDIR /USDNet
 COPY . /USDNet/
 
-RUN conda create -n usdnet python=3.10.9 -y
-RUN conda run -n usdnet conda install -c conda-forge pycocotools
+RUN conda create --override-channels -c conda-forge -n usdnet python=3.10.9 -y
+RUN conda run -n usdnet conda install -y --override-channels -c conda-forge pycocotools
 
 RUN conda run -n usdnet python -m pip install "pip==23.1"
 RUN conda run -n usdnet python -m pip install "setuptools<70"
 # RUN conda run -n usdnet pip3 install omegaconf==2.0.6
 RUN conda run -n usdnet pip3 install omegaconf==2.0.6
-RUN conda run -n usdnet conda install -y pyyaml=5.4.1
+RUN conda run -n usdnet conda install -y --override-channels -c conda-forge pyyaml=5.4.1
 
-RUN conda env update -n usdnet -f environment.yml
+RUN conda env update -n usdnet -f env/environment_upstream_cu113.yml
 
 
 

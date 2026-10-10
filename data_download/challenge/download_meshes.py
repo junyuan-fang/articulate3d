@@ -14,6 +14,9 @@ Meshes land in the same data_root as the full download, at the identical
 path, so the full download later skips whatever this already fetched.
 """
 import argparse
+import getpass
+import re
+from urllib.parse import quote
 import io
 import json
 import os
@@ -36,11 +39,29 @@ MAX_TRIALS = 8
 
 socket.setdefaulttimeout(120)
 _print_lock = threading.Lock()
+_active_token = ""
+
+
+def redact(value):
+    text = str(value)
+    if _active_token:
+        text = text.replace(_active_token, "[REDACTED]")
+        text = text.replace(quote(_active_token, safe=""), "[REDACTED]")
+    return re.sub(r"(?i)(token=)[^&\s\"'<>]+", r"\1[REDACTED]", text)
+
+
+def read_token():
+    token = os.environ.get("SCANNETPP_TOKEN", "").strip()
+    if not token and sys.stdin.isatty():
+        token = getpass.getpass("ScanNet++ download token (hidden): ").strip()
+    if not token or token == "<YOUR_TOKEN_HERE>":
+        raise SystemExit("Set SCANNETPP_TOKEN before unattended downloads.")
+    return token
 
 
 def log(msg):
     with _print_lock:
-        print(msg, flush=True)
+        print(redact(msg), flush=True)
 
 
 def fetch(url):
@@ -53,7 +74,7 @@ def fetch(url):
             if e.code == 404:
                 return None
             if e.code == 401:
-                log(f"FATAL: 401 unauthorized -- token invalid or expired\n{e.read()[:500]}")
+                log("FATAL: 401 unauthorized -- token invalid or expired")
                 os._exit(2)
             if e.code != 429 and not (500 <= e.code < 600):
                 raise
@@ -63,14 +84,14 @@ def fetch(url):
         delay = min(120, 5 * 2 ** attempt)
         log(f"  retry {attempt + 1}/{MAX_TRIALS} in {delay}s ({err})")
         time.sleep(delay)
-    raise RuntimeError(f"gave up: {url}")
+    raise RuntimeError(f"gave up: {redact(url)}") from None
 
 
 def get_scene(scene, token, data_root):
     ply = data_root / LOCAL_PLY.format(scene=scene)
     if ply.is_file():
         return "skip"
-    url = ROOT_URL.replace("TOKEN", token).replace("FILEPATH", REMOTE.format(scene=scene))
+    url = ROOT_URL.replace("TOKEN", quote(token, safe="")).replace("FILEPATH", REMOTE.format(scene=scene))
     blob = fetch(url)
     if blob is None:
         log(f"MISSING (404): {scene}")
@@ -88,12 +109,13 @@ def get_scene(scene, token, data_root):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--token", required=True)
     ap.add_argument("--data-root", default="/data/challenge/scannetpp_data")
     ap.add_argument("--splits", default=str(HERE.parent / "articulate3d_splits.json"))
     ap.add_argument("--workers", type=int, default=12)
     args = ap.parse_args()
 
+    global _active_token
+    _active_token = read_token()
     data_root = Path(args.data_root)
     splits = json.loads(Path(args.splits).read_text())
     scenes = splits["train"] + splits["val"] + splits["test"]
@@ -101,7 +123,7 @@ def main():
 
     counts, done = {}, 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futs = {pool.submit(get_scene, s, args.token, data_root): s for s in scenes}
+        futs = {pool.submit(get_scene, s, _active_token, data_root): s for s in scenes}
         for f in futs:
             pass
         for f, scene in futs.items():

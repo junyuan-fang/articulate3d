@@ -1,3 +1,4 @@
+# Upstream copyright and MIT terms: see THIRD_PARTY_NOTICES.md and licenses/.
 # Evaluates semantic instance task
 # Adapted from the CityScapes evaluation: https://github.com/mcordts/cityscapesScripts/tree/master/cityscapesscripts/evaluation
 # Input:

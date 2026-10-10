@@ -138,3 +138,14 @@ general.freeze_backbone
 ```
 
 见 [05-improvement.md](05-improvement.md)。
+
+
+## 发布配置的渠道迁移
+
+仓库内的 Dockerfile 已改用 Miniforge，移除自动接受 Anaconda 条款的命令。
+两份 Conda YAML 使用 conda-forge（当前 CUDA 导出另保留 NVIDIA 渠道），并以
+`nodefaults` 禁止追加默认渠道。旧版 YAML 的 Anaconda 专属构建编号及元包已移除。
+这两份文件是迁移后的版本规格，不再是原环境的逐字导出；尚未在 Linux/CUDA 上
+重新求解或构建，不能视为经过验证的锁文件。既有环境的测试记录不代表迁移后构建已通过。
+
+渠道选择参考：https://github.com/conda-forge/miniforge 。各依赖本身的许可证仍分别适用。

@@ -151,3 +151,12 @@ unset SCANNETPP_TOKEN
 ```
 
 下载进度、重试和错误消息会隐藏 Token。已外发的配置、旧日志、截图及 Git 历史中的凭据不会因当前文件修改而失效；需要向签发方撤销或更换旧 Token，再清理历史副本。
+
+
+只下载 challenge mesh 的入口也使用相同的 `SCANNETPP_TOKEN` 环境变量或终端隐藏输入：
+
+```bash
+python data_download/challenge/download_meshes.py --data-root /data/challenge/scannetpp_data
+```
+
+该入口已移除 `--token` 参数，避免凭据进入命令行历史和进程参数。

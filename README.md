@@ -4,6 +4,18 @@ Solution, technical report, and reproducible environment for the Articulate3D ch
 segment every movable / interactable part in a ScanNet++ indoor scan and predict its
 articulation (rotation / translation, axis, origin).
 
+## Award
+
+**2nd place, Track 3 (Interaction Understanding)**, OpenSUN3D Workshop Challenge, ECCV 2026
+(Malmö, 8 September 2026).
+
+<p align="center">
+  <a href="docs/award/opensun3d_eccv2026_track3_2nd_place.pdf">
+    <img src="docs/award/opensun3d_eccv2026_track3_2nd_place.png" width="640"
+         alt="OpenSUN3D Workshop Challenge @ ECCV 2026 - Track 3 second-place certificate, Junyuan Fang (Independent Researcher)">
+  </a>
+</p>
+
 ## Final standing (leaderboards frozen 2026-08-28)
 
 | Board | Ranking metric | Ours | Rank | Baseline (USDNet) |
@@ -27,7 +39,8 @@ Full write-up: `paper/main.pdf` (LaTeX source `paper/main.tex`).
 ```
 paper/            technical report: main.tex, refs.bib, figs/, main.pdf
 docs/             working notes 01-08 (environment, data, submission, diagnosis, finetune design,
-                  SOTA options incl. the c2f / BatchNorm pitfalls)
+                  SOTA options incl. the c2f / BatchNorm pitfalls);
+                  docs/award/ holds the challenge certificate (PDF + PNG)
 usdnet_patch/     our changes to the USDNet baseline, kept apart from upstream code:
                   usdnet_0ba303d.patch (edits to 10 upstream files), addons/ (files we added),
                   setup_usdnet.sh (fetches upstream insait-institute/USDNet@0ba303d into USDNet/
@@ -49,11 +62,11 @@ What actually ran the challenge:
 | File | What |
 |---|---|
 | `env/env.sh` | source this: sets CUDA_HOME to the conda env's nvcc 12.8, TORCH_CUDA_ARCH_LIST=12.0, activates `usdnet` |
-| `env/usdnet_conda_export.yml` | `conda env export --no-builds` of the real `usdnet` env |
+| `env/usdnet_conda_export.yml` | version snapshot of `usdnet`, migrated to conda-forge/NVIDIA channels (rebuild unvalidated) |
 | `env/usdnet_pip_freeze.txt` | `pip freeze` of the same env (torch 2.7.1+cu128, MinkowskiEngine 0.5.8 built for sm_120) |
 | `env/hardware.txt` | GPU / driver / torch / MinkowskiEngine versions |
 | `env/README_environment.md` | how the env was built and every pitfall hit on the way |
-| `env/environment_upstream_cu113.yml`, `env/Dockerfile_upstream` | upstream's original env for reference |
+| `env/environment_upstream_cu113.yml`, `env/Dockerfile_upstream` | upstream-derived environment, migrated to Miniforge/conda-forge (rebuild unvalidated) |
 
 Quick start (after downloading data per `docs/02-data.md` and the released USDNet checkpoints):
 
@@ -98,8 +111,15 @@ Datasets (ScanNet++, Articulate3D annotations), preprocessed data, checkpoints, 
 pickles, EvalAI tokens. Paths inside scripts still point at the original machine layout
 (`/data/challenge/...`); adjust as needed.
 
+## Acknowledgement
+
+The solution builds on the USDNet / Articulate3D codebase and the ScanNet++ dataset. Thanks also
+to the OpenSUN3D challenge organizers for running the challenge and the evaluation server.
+
 ## License
 
 MIT, see `LICENSE`. This repo does not include upstream USDNet code; `setup_usdnet.sh` fetches it
 from its official repository. The patch modifies upstream USDNet (MIT, notice kept in
 `usdnet_patch/LICENSE-USDNet`).
+
+Third-party evaluation code retains its upstream notices; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
