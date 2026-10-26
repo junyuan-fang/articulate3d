@@ -14,3 +14,15 @@ __pycache__/
 USDNet/
 # credentials
 *token*.txt
+# report build intermediates and locally generated preprint source package
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.xdv
+paper/tech_report/*.aux
+paper/tech_report/*.log
+paper/tech_report/*.out
+paper/tech_report/*.xdv
+/output/arxiv/

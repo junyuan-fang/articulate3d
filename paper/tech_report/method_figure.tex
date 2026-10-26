@@ -38,7 +38,7 @@
 \node[geonode=34mm, below=11mm of grot] (dbs) {\textbf{DBSCAN structural split}\\\scriptsize connected components $+$ fragment filter $+$ NMS};
 \draw[ar] (gtr.south) -- (dbs.north); \draw[ar] (grot.south) -- (dbs.north); \draw[ar] (gor.south) -- (dbs.north);
 \draw[ar] (mh.south) |- (dbs.west);
-\node[box=34mm, below=6mm of dbs, draw=frozengray, fill=white] (out) {\metric{} $=$ \apfifty{} $\times$ axis $\times$ origin};
+\node[box=34mm, below=6mm of dbs, draw=frozengray, fill=white] (out) {part masks, types, axes and origins};
 \draw[ar] (dbs) -- (out);
 \end{tikzpicture}
 \end{document}

@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite this repository."
+type: software
+title: "Articulate3D Challenge (OpenSUN3D at ECCV 2026, Track 3)"
+authors:
+  - family-names: "Fang"
+    given-names: "Junyuan"
+repository-code: "https://github.com/junyuan-fang/articulate3d"
+url: "https://github.com/junyuan-fang/articulate3d"
+license: MIT

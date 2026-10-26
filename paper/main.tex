@@ -2,6 +2,7 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{multirow}
 \usepackage{graphicx}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
@@ -20,63 +21,44 @@
 \newcommand{\metric}{AP$_{50}^{\text{axis+origin}}$}
 \newcommand{\apfifty}{AP$_{50}$}
 
-\title{Geometry Beats Regression:\\
-A Diagnosis-Driven, Almost-Training-Free Recipe for\\
-Scene-Level Articulated Part Understanding}
+\title{Geometric Refinement and Structural Post-Processing\\
+for Scene-Level Articulated Part Understanding}
 
 \author{
   Junyuan Fang\\
+  Independent Researcher\\
   \texttt{fangjunyuan1@gmail.com}
-  % TODO: affiliations, co-authors
 }
-\date{August 2026}
+\date{October 2026}
 
 \begin{document}
 \maketitle
+\begin{center}\small Technical report; preprint draft. No arXiv identifier has been assigned.\end{center}
 
 \begin{abstract}
-We describe our solution to the Articulate3D challenge (OpenSUN3D, ECCV
-2026). The task: find every movable part in a real-world 3D indoor scan and
-predict how it moves --- rotation or translation, the motion axis, and the
-axis origin. Our entries placed first on both dev leaderboards and second
-on both test leaderboards of the challenge's two tasks. On the movable-part
-task we improve the official USDNet baseline from test \metric{} $=0.264$
-to $\mathbf{0.4056}$ ($+54\%$ relative). On the companion interactable-part
-task we improve from $0.2686$ to $\mathbf{0.3286}$ ($+22\%$).
+We present a diagnosis-driven solution to the Articulate3D challenge at
+OpenSUN3D, ECCV 2026. Starting from released USDNet checkpoints, we improve
+scene-level movable-part segmentation and articulation prediction through
+three stages. First, we freeze the segmentation pathway, train an
+88K-parameter attention-pooled origin head, and apply geometric rules for
+translation axes and rotation origins. Second, offline DBSCAN splitting,
+fragment filtering and non-maximum suppression separate merged instances.
+Together these stages improve the movable-task test joint AP from $0.2640$
+to $0.3760$. Third, full-network mirror-flip finetuning improves the final
+movable score to $\mathbf{0.4056}$; a three-model interaction ensemble reaches
+mask AP$_{50}$ $\mathbf{0.3286}$ from a $0.2686$ baseline. Our entries finished
+first on both dev leaderboards and second on both test leaderboards.
 
-The recipe combines a few components that can be read independently:
-\begin{itemize}
-\item \textbf{Diagnosis before design.} Per-instance error forensics shows
-  the two articulation heads fail for different reasons: the axis head
-  collapses onto the dominant gravity-aligned mode, and the origin head
-  shrinks predictions toward the part centroid.
-\item \textbf{Training-free geometric priors} replace the learned
-  regressors: translation axes read off the panel geometry of the predicted
-  mask, rotation origins snapped to a mask endpoint on the side opposite the
-  predicted handle, and rotation axes forced vertical. This takes the test
-  score from $0.264$ to $0.3385$ with the segmentation branch bit-identical.
-\item \textbf{One trained component}: an $88$K-parameter attention-pooled
-  origin head, finetuned with every other parameter frozen ---
-  \emph{including} BatchNorm running statistics.
-\item \textbf{Structural post-processing}: the model routinely merges the
-  two leaves of a double door into one instance. Splitting predicted masks
-  into spatially connected components (DBSCAN) transfers near-fully to
-  test, lifting the movable task to $0.3760$ and the interaction
-  task from $0.2686$ to $0.2886$.
-\item \textbf{A bet against a memorized validation set}: the released
-  checkpoints were trained on train$+$validation, so validation scores them
-  in-sample. A mirror-flip finetune gained only $+0.004$ on validation but
-  $+0.027$ on test, and an equal-strength two-model ensemble reached
-  $0.3240$. Transplanting the same recipe to the movable model on deadline
-  day delivered the final $0.4056$ and $0.3286$.
-\end{itemize}
-
-We also document more than two dozen negative results, including two silent
-training pitfalls: frozen parameters do not stop BatchNorm buffers from
-drifting, and finetuning a released checkpoint can restart its coarse-to-fine
-curriculum from scratch. This report is iterative competition engineering
-under a one-submission-per-day budget, not a set of controlled ablations; we
-flag every comparison that is confounded.
+The report contributes geometric refinement rules, a structural
+post-processing recipe, and an analysis of training and evaluation pitfalls,
+including BatchNorm-buffer drift, restarted coarse-to-fine supervision, and
+floating-point failures in axis matching. We distinguish the frozen-model
+recipe from the later full-network finetunes and separate the intermediate
+two-model interaction ensemble ($0.3240$) from the final three-model result.
+These are retrospective competition experiments under a limited submission
+budget, rather than controlled, multi-seed ablations. Validation is in-sample
+for the released checkpoints and the later train-plus-validation finetunes;
+its gains cannot establish held-out generalization or a memorization mechanism.
 \end{abstract}
 
 \section{Introduction}
@@ -85,23 +67,26 @@ Articulated part understanding asks a model to find every movable part in a
 scene-level 3D scan and to predict how it moves: the motion type (rotation or
 translation), the motion axis, and --- for rotations --- the origin of that
 axis. The Articulate3D benchmark~\cite{halacheva2025articulate3d} poses this
-task on 280 high-fidelity ScanNet++~\cite{yeshwanth2023scannetpp} indoor
+task on 279 released challenge scenes drawn from high-fidelity ScanNet++~\cite{yeshwanth2023scannetpp} indoor
 scans, with the USDNet baseline built on
 Mask3D~\cite{schult2023mask3d}/MinkowskiNet~\cite{choy2019minkowski}.
 
 Our starting point is a faithful reproduction of the USDNet baseline
 (test \metric{} $=0.2640$, matching the officially published $0.26$). We do
-not scale the model or the training. Instead we follow a strict
+not change the baseline architecture in the initial frozen-model stages.
+Later experiments finetune the full network. Throughout, we follow a
 \emph{diagnosis-first} methodology: measure exactly where the metric loses
 points, attribute each loss to a mechanism in the pipeline, and prefer the
 cheapest intervention --- ideally a training-free geometric one --- that
 addresses that mechanism.
 
-Five observations shaped everything that follows. The first three arrived in
-the opening weeks; the last two only in the campaign's final days.
+Our contributions are (1) mask-conditioned geometric refinement of axes and
+origins, (2) structural splitting of merged predictions across both tasks,
+and (3) an empirical account of freezing, curriculum and evaluation pitfalls.
+The following observations motivate these components.
 
 \begin{enumerate}
-\item \textbf{Segmentation is not the bottleneck.} Our mask \apfifty{}
+\item \textbf{Articulation was the initial bottleneck.} Our mask \apfifty{}
   ($0.437$) already led the public leaderboard. The deficit relative to the
   leading entry was entirely in \emph{articulation retention} --- the fraction
   of correctly segmented instances that also pass the axis and origin
@@ -118,15 +103,14 @@ the opening weeks; the last two only in the campaign's final days.
   two adjacent handles) into one instance, corrupting every geometric
   quantity computed on the merged mask.
   Splitting masks into spatially connected components is
-  distribution-independent --- ``two doors are two objects'' is true on any
-  split --- and, unlike our tuned thresholds, its gains transferred near-fully
-  to test (\S\ref{sec:structural}).
-\item \textbf{A memorized validation set hides exactly the gains that
-  matter.} The released checkpoints were trained on train$+$validation, so
-  validation scores them in-sample. A finetune with mirror-flip augmentation
-  moved validation by $+0.004$ and test by $+0.027$: the augmentation
-  dividend was nearly invisible on the memorized split
-  (\S\ref{sec:extension}). When quota permits, arbitration must be held out.
+  a structural intervention; on the movable task its validation gain
+  transferred substantially to test (\S\ref{sec:structural}).
+\item \textbf{Validation and test gains can differ substantially.} Both the
+  released checkpoints and the later augmented finetunes use
+  train$+$validation. The interaction finetune improved validation by
+  $+0.004$ and test by $+0.027$ (\S\ref{sec:extension}). This difference is
+  descriptive evidence from this campaign, not a controlled demonstration
+  that memorization caused the discrepancy.
 \end{enumerate}
 
 \section{Related Work}
@@ -203,9 +187,9 @@ How each piece was used, concretely:
 \item \textbf{train (195 scenes):} the only data our early head finetune
   (the $88$K origin attention head, \S\ref{sec:originhead}) trained on.
 \item \textbf{train$+$validation (237 scenes):} what the released
-  checkpoints saw --- the root of the validation-memorization effect we
-  later exploited (\S\ref{sec:extension}) --- and what our augmented
-  finetunes \texttt{v5}/\texttt{v6}/\texttt{mov\_v11} retrain on.
+  checkpoints saw --- the root of the in-sample validation caveat discussed (\S\ref{sec:extension}) --- and what our augmented
+  finetunes \texttt{v5}, \texttt{v6}, \texttt{v5b} and \texttt{mov\_v11} retrain on.
+  Their validation results are consequently also in-sample.
 \item \textbf{validation (42 scenes):} our offline arbiter. We rebuilt the
   official evaluation to bit-exactness against the challenge server
   (verified on two submissions), so all iteration ran offline without
@@ -224,9 +208,10 @@ How each piece was used, concretely:
 \end{itemize}
 Not used: the ScanNet++ RGB streams (DSLR or iPhone), meshes beyond the
 preprocessed clouds, the USD hierarchy/connectivity annotations, and any
-external data. Omitting the image modality is not merely convenient: our cue
-inventory (\S\ref{sec:selection}) measured that RGB and normals --- the two
-input columns the pipeline never consumed --- carry no hinge signal.
+external data. Our hand-crafted RGB and normal cues did not show useful
+hinge-side discrimination in the measured validation probes
+(\S\ref{sec:selection}); this does not establish that these modalities
+lack information for other models or feature constructions.
 
 \subsection{Baseline}
 
@@ -281,12 +266,14 @@ $100\%$ of instances (median residual $8$\,mm), while the centroid passes
 only $28\%$.
 
 \textbf{Independence.} Axis and origin failures are nearly independent
-($\phi=-0.11$), so fixes compose additively.
+($\phi=-0.11$) in the matched validation sample, motivating separate
+interventions without implying that their AP gains must add.
 
 \section{Method}
 
 \begin{figure*}[t]
 \centering
+\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
   box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt,
@@ -343,14 +330,15 @@ only $28\%$.
 
 % ---- row 4: outputs ----
 \node[box=34mm, below=11mm of grot, draw=frozengray, fill=white] (out)
-  {\metric{} $=$ \apfifty{} $\times$ axis $\times$ origin};
+  {part masks, types,\\axes and origins};
 \draw[ar] (gtr.south) -- (out.north);
 \draw[ar] (grot.south) -- (out.north);
 \draw[ar] (gor.south) -- (out.north);
 % masks bypass the geometry entirely -- routed below the dashed box
 \draw[ar] (mh.south) |- (out.west);
 
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{\textbf{The recipe.} Everything on the mask pathway is frozen at the
 released weights, so \apfifty{} is bit-identical to the baseline by
 construction. Exactly one component is trained --- an $88$\,K-parameter
@@ -363,7 +351,13 @@ challenge's companion interactable-part task.}
 \label{fig:pipeline}
 \end{figure*}
 
-This section describes the pipeline (Figure~\ref{fig:pipeline}). The design
+Figure~\ref{fig:pipeline} depicts the initial frozen-model recipe, not the
+later full-network finetuning stage. The evaluator recomputes joint AP using
+the conjunction of mask, axis and origin matching criteria; products of
+retention factors elsewhere in this report are interpretive heuristics,
+not a definition of the official joint AP.
+
+This section describes that recipe. The design
 follows directly from the diagnosis: keep the segmentation frozen, train one
 small origin head, and overwrite the articulation parameters with geometry
 read off the predicted masks.
@@ -412,8 +406,9 @@ is attributable to the aggregation alone. Training uses the metric-aligned
 point-to-line loss and a sign-agnostic $1-|\cos|$ axis loss --- the metric
 takes $|\cos|$, and penalizing a $180^\circ$ flip with maximum loss fights
 the evaluator. The head trains on the 195 train scenes only. The released
-baseline was trained on train$+$val, which silently inflates its validation
-scores by $\sim$$0.01$; this is worth knowing when comparing numbers.
+baseline was trained on train$+$val. An observed validation difference of
+$\sim$$0.01$ between checkpoint variants is not a clean estimate of the
+effect of training on validation, because the training histories also differ.
 
 \subsection{Axis anchors instead of free regression}
 
@@ -524,8 +519,9 @@ the challenge server bit-for-bit (verified on two submissions). Inference is
 nondeterministic (unseeded); repeated runs vary by $\pm 0.002$, which we
 treat as the noise floor.
 
-The backbone, decoder and mask head are the released USDNet weights
-throughout, so \apfifty{} is constant across post-processing changes
+In the initial recipe and its post-processing studies, the backbone, decoder
+and mask head retain the released USDNet weights; the full-network
+finetunes of \S\ref{sec:extension} are an explicit exception. Thus, so \apfifty{} is constant across post-processing changes
 \emph{within} a checkpoint. It is not constant across checkpoints. Our
 train$+$val origin retrain leaves the predicted masks byte-identical but
 alters \texttt{pred\_classes} and \texttt{pred\_scores}; because average
@@ -579,7 +575,7 @@ at the time, ahead of the concurrent leader by $0.0024$; it differs from the
 and AP$_{50}^{\text{origin}}$ return bit-identical to seven decimals, so its
 $+0.0041$ axis gain is attributable to those two rules alone
 (\S\ref{sec:confound}). The DBSCAN structural split is the single deliberate
-mask-touching operation of the campaign (\S\ref{sec:structural}); the
+mask-touching operation before full-network finetuning (\S\ref{sec:structural}); the
 cleaned-handle row is our best pre-extension score, $0.0367$ ahead of the
 pre-extension runner-up. The deadline-day retrain that supersedes it
 appears in \S\ref{sec:extension} and Table~\ref{tab:final}. Validation
@@ -608,8 +604,9 @@ final scores to $0.4056$/$0.3286$ (\S\ref{sec:extension}).}
 \caption{\textbf{Validation gain vs.\ realised test gain, by kind of
 change.} Tuned thresholds keep $31\%$ of their validation gain on test; the
 structural DBSCAN split keeps $75\%$; the mirror-flip finetune realises
-$\sim$$700\%$, because a memorized validation set cannot see the
-generalization that augmentation buys.}
+$\sim$$700\%$. These ratios describe observed changes; both the baseline
+and finetune validation scores are in-sample, and the ratios do not identify
+a causal mechanism.}
 \label{fig:transfer}
 \end{figure}
 
@@ -619,7 +616,8 @@ both tasks. Figure~\ref{fig:transfer} shows the pattern that organised the
 campaign: how much of a validation gain reaches test depends on the
 \emph{kind} of change. Validation-tuned thresholds transferred at roughly
 $1{:}3$ --- double optimism from fitted hyperparameters plus a validation
-set the released backbone had trained on. The geometric recipe transferred
+set used to train the released backbone. These effects are not isolated by
+the comparisons. The geometric recipe transferred
 at $\sim$$1.2{:}1$ (val $+0.042 \rightarrow$ test $+0.049$): panel normals
 and hinge-opposite-handle are properties of the world, not of the split.
 
@@ -638,7 +636,7 @@ Every diagnosis in \S\ref{sec:diagnosis} was run on \emph{baseline}
 predictions. Once the geometric priors rewrite every axis and every
 rotation origin, the error profile is a different distribution. We
 initially failed to re-measure it, and spent considerable effort on lateral
-hinges (7 instances, proven unfixable) while the actual residual sat
+hinges (7 instances not recovered by the methods tested) while the actual residual sat
 elsewhere. Re-running the per-instance breakdown on the deployed stack:
 
 \begin{center}
@@ -712,9 +710,10 @@ the measurement is clean before you interpret it.
 \subsection{The remaining bottleneck is selection, not representation}
 \label{sec:selection}
 
-This subsection asks what limits the deployed pipeline: the origin is the
-weak factor, the correct point is always present in the mask, and no
-available signal selects it better than the handle rule already does.
+This subsection examines the measured residual: origins remain a weak
+factor on the matched validation subset. Its predicted masks contain
+near-hinge points, but the tested selectors do not outperform the handle
+rule reliably. These findings are conditional on this subset and model.
 
 Pushing past our submitted score means improving one of the three factors in
 \metric{} $\approx$ \apfifty{} $\times\, r_{\text{axis}} \times r_{\text{origin}}$,
@@ -752,9 +751,10 @@ colour variance along the edge & 0.435 & 35.9\% \\
 \end{tabular}
 \end{center}
 
-RGB and the surface normals --- the two inputs the pipeline had never used ---
-carry nothing. The handle is the only informative cue, and it is already
-deployed. This also explains a failure we had found puzzling: a logistic
+The tested RGB and surface-normal features did not provide evidence of
+useful discrimination. Handle distance was the strongest measured cue and
+was already deployed. These negative probes do not rule out other features
+or nonlinear models using the same inputs. This also explains a failure we had found puzzling: a logistic
 selector over these features, under leave-one-scene-out CV, scores $78.9\%$,
 \emph{below} the hand-written rule, because it dilutes the one real signal
 with five noisy ones.
@@ -765,16 +765,458 @@ retrain the backbone''. We probe the $256$-d input to the anchor module
 (query embedding concatenated with mask-pooled point features) over $137$
 instances, leave-one-scene-out, against a permutation null. Predicting where
 along its width the hinge sits gives $R^2 = -0.301$ against a null of
-$-0.213 \pm 0.115$, i.e.\ $0.8\sigma$ --- no signal. With a frozen backbone a
-new head can only exploit what the features already contain, and the hinge
-location is not in them.
+$-0.213 \pm 0.115$, i.e.\ $0.8\sigma$ --- no useful signal detected by this probe. With a frozen backbone a
+new head must exploit the frozen features. This probe did not recover hinge
+location reliably; it does not establish information-theoretic absence.
 
 This corrects our own earlier reasoning: we had leaned for days on a probe
 with only \emph{seven} positives --- far too few for an AUC to establish
-absence. The properly powered experiment agrees with it, but only the
-latter is evidence.
+absence. The larger probe also failed to find useful predictive performance, but
+its size, choice of readout and uncertainty still limit the conclusion.
 
-\subsection{Negative results}
+\subsection{Summary of negative results}
+We tested alternative axis heads, origin selectors, mask snapping and
+augmentation strategies. Detailed outcomes and failure analyses are retained
+in Appendix~\ref{sec:negative}. They are configuration-specific observations,
+not proofs that the broader research directions cannot work.
+
+\subsection{An evaluator artifact: bit-exact axes are scored as misses}
+\label{sec:oracle-artifact}
+
+This subsection documents a floating-point artifact in the official
+evaluator that makes \emph{perfect} predictions fail. It silently caps every
+oracle, and it inverts the usual assumption that an oracle measures the
+headroom of a component.
+
+The axis criterion is implemented as
+\begin{verbatim}
+deriavation = np.dot(axis_ref, axis_checked) /
+              (np.linalg.norm(axis_ref) * np.linalg.norm(axis_checked))
+is_axis = np.arccos(np.abs(deriavation)) < np.deg2rad(15)
+\end{verbatim}
+For two \emph{bit-identical} unit vectors the quotient does not evaluate to
+$1.0$: the roundings of the numerator and of the product of norms disagree,
+and the result is $1{+}1\,\text{ULP} = 1.0000000000000002$. Then $\arccos$
+returns \texttt{NaN}, and \texttt{NaN < th} is \texttt{False}. An exactly
+correct axis is recorded as a miss. Sampling generic unit vectors, $36.4\%$
+of self-comparisons overflow this way. Axes with exactly representable
+components, such as the canonical $(0,0,\pm 1)$, always give exactly $1.0$
+and are safe.
+
+That distinction is what makes the artifact so asymmetric here. Of the 236
+validation rotation axes, 206 are stored as canonical $(0,0,\pm 1)$ (the
+benchmark is gravity-dominated, cf.\ \S\ref{sec:diagnosis}), so their NaN
+rate is only $4.2\%$. None of the 154 translation axes is canonical, and
+their rate is $50.6\%$. Consequently the ideal oracle --- GT masks, GT
+classes, GT axes and GT origins, all confidences $1.0$ --- scores
+\metric{} $=0.6516$ rather than $1.0$, with mask \apfifty{} $=1.0000$ and
+AP$_{50}^{\text{origin}} =1.0000$. The entire deficit is in the axis term,
+and $90.7\%$ of it falls on translations. The evaluator applies the
+criterion in both matching directions, so each overflow costs a hard false
+negative \emph{and} a false positive ($88/390$ instances fail in the GT
+loop, $90/390$ in the prediction loop; the asymmetry is the rounding of
+$\mathbf{a}\!\cdot\!\mathbf{b}$ versus $\mathbf{b}\!\cdot\!\mathbf{a}$). The
+resulting per-class arithmetic closes exactly, e.g.\ for rotations
+$\tfrac{1}{2}\cdot\tfrac{226}{236}\cdot(1+\tfrac{226}{237}) = 0.9354$,
+matching the evaluator's reported $0.9354$.
+
+Two consequences are worth stating plainly. First, \textbf{being exactly
+right is punished}: pasting the true GT axes onto our model's own
+predictions \emph{lowers} AP$_{50}^{\text{axis}}$ from $0.4432$ to $0.3860$.
+Second, \textbf{the score depends on serialization precision}. Rounding the
+same GT axes before submission changes nothing geometrically but moves the
+oracle to $0.9951$ at \texttt{\%.6f} (the format our own submission writer
+uses), $0.9743$ at \texttt{\%.7f}, $1.0000$ at five decimals or fewer, and
+$0.7368$ when cast to \texttt{float32} --- because rounding perturbs the
+vector just enough that the quotient lands strictly below $1$. A one-line
+\texttt{np.clip(deriavation, -1.0, 1.0)} in a copy of the evaluator restores
+the ideal oracle to exactly $1.0000$ on all four sub-metrics, confirming
+that this single line accounts for $100\%$ of the gap.
+
+We verified that nothing else contributes. No GT instance is dropped by
+\texttt{min\_region\_sizes} (smallest is 16 points) or by the valid-class
+filter. GT masks are disjoint by construction (one integer per point, and
+mask \apfifty{} is exactly $1.0$). No GT axis is degenerate or flagged
+\texttt{needsReview}. Point counts agree across the annotation, the
+processed tensors and the prediction pickle for all 42 scenes, and the AP
+integration itself returns exactly $1.0$ for an all-true-positive curve at
+any confidence assignment. All measurements and the intervention are
+reproducible via \texttt{analysis/oracle\_gap.py}; the original evaluator
+was left untouched.
+
+\subsection{The axis head has collapsed completely}
+\label{sec:collapse}
+
+Re-diagnosing the deployed pipeline shows the gravity collapse is not
+partial but total. $95.6\%$ of the $2854$ predicted rotation axes are
+\emph{exactly} $[0,0,1]$, and printing the remaining $4.4\%$ against ground
+truth shows they are simply wrong. Forcing them all vertical is therefore
+free, and worth $+0.0017$ AP$_{50}^{\text{axis}}$ at zero parameters.
+
+The consequence is that rotation-axis accuracy is now a property of the data
+rather than of the model. It equals the fraction of ground-truth rotation
+axes lying within $15^\circ$ of vertical: $169/180 = 93.9\%$ on validation.
+Of the twelve failures before the snap, seven are lateral hinges (ground
+truth horizontal); four have genuinely tilted ground truth ($23.4^\circ$,
+$29.7^\circ$, $35.0^\circ$, $44.7^\circ$ from vertical --- so no snapping
+rule can reach them either); one was the single non-vertical prediction,
+which the snap fixes. With translation at $95.8\%$, articulation
+post-processing has little measured headroom under the tested rules; this
+is not an upper bound over all possible post-processors. The geometric detector, the learned selector,
+and rebalanced training all failed in instructive ways
+(\S\ref{sec:negative}). Mask recall ($70.5\%$ of GT instances matched at IoU
+$0.5$) caps \apfifty{} $=0.571$ on validation and is the largest untouched
+quantity. Our TTA experiments show it cannot be recovered at inference time
+from a backbone trained without the corresponding augmentation; unlocking it
+requires retraining the segmentation branch with the (now fixed) geometric
+augmentations, which we deliberately kept out of scope to preserve the
+leading mask quality. Events later tested both halves of that judgment: an
+offline structural split found mask gains that post-processing could still
+reach (\S\ref{sec:structural}), and a deadline extension funded precisely
+the augmentation retrain deferred here --- first on the interaction task,
+then on the movable model itself, and it paid both times
+(\S\ref{sec:extension}).
+
+One untested direction addresses the collapse at its documented cause. An
+axis is a point on $\mathbb{RP}^2$, not a free vector in $\mathbb{R}^3$, and
+our treatment of it is Euclidean throughout: per-point votes are averaged
+linearly (so opposite signs cancel, one plausible route into a single
+dominant mode), anchor residuals are added and renormalised rather than
+pushed through an exponential map, and anchor selection is a discrete
+softmax --- the same softmax whose confidence wall we showed makes the
+lateral-hinge classifier immovable. Replacing the discrete selector with
+continuous regression in the tangent space at an anchor removes that wall by
+construction, and aggregating with the leading eigenvector of
+$\sum_i a_i a_i^{\!\top}$ is the sign-correct mean on $\mathbb{RP}^2$. Taken
+further, a rotation axis and its origin jointly specify a \emph{line} in $\mathbb{R}^3$,
+whose natural home is the affine Grassmannian under Plücker coordinates ---
+which is also how the evaluator scores them, as a point-to-line distance. We
+flag this as the one remaining idea aimed at a known failure mechanism
+rather than at a symptom.
+
+\section{Structural Post-Processing: Two Doors Are Two Objects}
+\label{sec:structural}
+
+This section covers the campaign's second stage: an offline splitting of
+merged instances that lifted both tasks, and the one deliberate exception to
+the frozen-mask rule.
+
+\S\ref{sec:collapse} concluded that articulation post-processing was
+exhausted, and the frozen-mask rule of \S\ref{sec:freeze} was our guarantee
+of clean attribution. Forty-eight hours before the original deadline,
+looking at per-scene predictions rather than per-instance statistics
+surfaced a failure class no threshold sweep would have found. A disclaimer
+up front,
+applying to this section and the next: with one submission per day on each
+test leaderboard, these results are iterative competition engineering ---
+one variable at a time wherever quota allowed, server-verified wherever a
+slot existed --- not controlled ablations, and we flag every comparison that
+is confounded.
+
+The companion interaction task now enters the story as more than a handle
+source, so we restate it (cf.\ \S\ref{sec:data}): it segments interactable
+elements (handles, knobs, buttons), scored by plain mask \apfifty{} with no
+articulation term. Until this point our entry there was the released
+interaction checkpoint, unmodified: validation $0.5363$, test $0.2686$.
+
+\subsection{The failure: a merged mask corrupts everything downstream}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figs/fig_split_before_after}
+\caption{\textbf{Structural splitting, validation scene
+\texttt{5748ce6f01}.} Left: the model merges two distant, visually similar
+door leaves --- on opposite walls, $4.2$\,m apart --- into one predicted
+instance, so merging is a structural defect of the model, not a proximity
+artifact. Right: DBSCAN $\varepsilon$-connectivity separates the mask into
+its two spatial components ($5267$ and $5295$ points; centroids marked),
+and every downstream geometric quantity is then computed per leaf.}
+\label{fig:split}
+\end{figure}
+
+The model routinely merges the two leaves of a double door --- or two
+adjacent handles --- into a \emph{single} predicted instance
+(Figure~\ref{fig:split}). The direct cost is familiar: against either
+ground-truth instance the merged mask has IoU $\approx 0.5$, so both
+matches sit at the metric's threshold and usually fall below it. The
+indirect cost is worse and specific to our pipeline: every geometric prior
+of \S\ref{sec:geo} is computed \emph{on the mask}, so a merged mask's PCA
+axis runs diagonally across the pair and its ``perpendicular endpoint''
+lands in the gap between the doors. A merged instance does not merely lose
+its own point; it poisons the axis and origin that the whole method reads
+off the geometry.
+
+\subsection{The DBSCAN trio: split, filter, suppress}
+
+The fix is offline connected-component splitting. Run DBSCAN
+(\texttt{min\_samples}$=1$, so it is pure $\varepsilon$-connectivity) on the
+points of each predicted mask, emit each spatial component as its own
+instance, drop components below a minimum size, and finish with IoU-based
+NMS to remove duplicates. We call this three-step post-process the
+\emph{trio}. It runs on the dumped predictions plus the preprocessed point
+coordinates --- no GPU, no re-inference.
+
+For the movable task ($\varepsilon = 0.2$\,m, minimum $50$ points) the trio
+raises validation mask \apfifty{} $0.5716 \to 0.5801$ and, rerunning the
+geometric stack on the split masks, the joint metric $0.4621 \to 0.5021$;
+on the test server, $0.3385 \to 0.3689$ (Figure~\ref{fig:progression}). As
+the mechanism predicts, the gain concentrates in the origin term
+($0.3601 \to 0.3955$): each leaf's PCA axis and endpoint origin are finally
+computed on the right geometry. For the interaction task
+($\varepsilon = 0.075$, minimum $5$ points, NMS at IoU $0.75$), validation
+goes $0.5363 \to 0.6054$ and test $0.2686 \to 0.2864$.
+
+Splitting addresses a structural defect, but its DBSCAN radius, minimum
+component size and NMS threshold are still selected on validation. On the
+movable task the measured transfer was substantial
+(Figure~\ref{fig:transfer}); this observation does not guarantee transfer
+to other datasets or splits.
+On the interaction task the same trio realised $+0.069 \to +0.018$; the
+absolute levels there differ by a factor of two ($0.54$ validation vs.\
+$0.27$ test), and both validation scores are in-sample
+(\S\ref{sec:extension}). We report the measured difference without
+attributing it uniquely to memorization.
+
+\subsection{Per-class $\varepsilon$: cluster radius is element scale}
+
+A single $\varepsilon$ for the interaction task is a compromise across
+element sizes: handles are elongated, knobs and buttons are tiny. Splitting
+the radius by class --- $\varepsilon = 0.1$ for handles (class 1),
+$\varepsilon = 0.065$ for knobs/buttons (class 2) --- is one number per
+physical scale. It lifts validation $0.6054 \to 0.6253$ and test
+$0.2864 \to 0.2886$.
+
+\subsection{Cleaning the handle source}
+
+The hinge-side rule of \S\ref{sec:geo}(iii) consumes \emph{predicted} handle
+masks, and those predictions carry the same merged-instance disease, so we
+feed the movable pipeline the trio-processed interaction predictions
+instead. Validation joint metric moves $0.5021 \to 0.5038$ (origin
+$0.5393 \to 0.5411$); on test, $0.3689 \to \mathbf{0.3760}$ (origin
+$0.3955 \to 0.4026$) --- an over-delivery relative to the validation
+estimate, and our best pre-extension movable-test score. The two tasks are
+coupled:
+interaction post-processing quality is an input to movable origin
+accuracy.
+
+\subsection{A quota-timing mistake}
+
+One episode from the original deadline day is worth recording as a negative
+result about \emph{process}. Each test leaderboard allows one submission per
+day. We spent the interaction-test slot at dawn on the per-class variant
+($0.2886$). By dusk we had built a better candidate and no quota left to
+submit it, and a competitor's buzzer submission took first place at
+$0.2904$. The $0.0018$ deficit was not a modelling gap but a scheduling one.
+On a deadline day the daily submission is the day's scarcest asset, and it
+should be spent at the \emph{end} of the day, on the best artifact the day
+produced.
+
+\section{Full-Network Finetuning and Interaction Ensembling}
+\label{sec:extension}
+
+This section covers the final stage: full-network augmentation finetuning
+and interaction-model proposal ensembling. Unlike the frozen recipe,
+these runs may change the backbone, decoder, masks and BatchNorm buffers.
+An extension of the competition deadline provided additional submission
+slots for evaluating these candidates.
+
+\subsection{Validation protocol and its limits}
+
+The released interaction checkpoint was trained on train$+$validation,
+and so were \texttt{v5}, \texttt{v6}, \texttt{v5b} and \texttt{mov\_v11}.
+Validation is therefore in-sample for both the baseline and these
+finetunes; it is incorrect to regard the finetunes as out-of-sample on
+that split. We nevertheless used validation for configuration selection,
+so it does not provide an unbiased estimate of generalization.
+
+Augmentation was motivated by the released configuration's lack of geometric
+augmentation, a flip-time axis-label transform bug that we corrected, and
+poor recall on mirrored inputs ($55.9\%$ versus $70.5\%$ on original inputs,
+\S\ref{sec:negative}). Test-server scores provide held-out-label measurements,
+but the limited, repeated submissions also informed method selection.
+The experiments do not isolate the contribution of memorization,
+augmentation, checkpoint selection or other training changes.
+
+\subsection{\texttt{v5}: the flips-only finetune}
+
+\texttt{v5} finetunes the released interaction checkpoint on
+train$+$validation with mirror-flip augmentation, coarse-to-fine curriculum
+\emph{off} (\S\ref{sec:c2f}), learning rate $10^{-5}$, $60$ epochs, batch
+size $1$, cropping on. In-sample validation moved by $+0.004$ only
+($0.536 \to 0.540$). On test it moved by $+0.027$:
+$0.2886 \to \mathbf{0.3156}$. The larger observed test gain is useful retrospective evidence for this
+configuration, but does not by itself identify why the validation and test
+changes differ. Both validation measurements are in-sample, and this
+comparison is not a controlled test of a memorization hypothesis.
+
+\subsection{\texttt{v6} and the equal-strength ensemble}
+
+\texttt{v6} repeats the recipe with random yaw rotation added. Solo it is
+weaker ($0.529$ validation) --- but its augmentation spectrum differs from
+\texttt{v5}'s, which is the property an ensemble needs. We take the union of
+\texttt{v5} and \texttt{v6} proposals, then run the per-class DBSCAN trio
+over the union with NMS at $0.55$: validation $0.6446$, test
+$\mathbf{0.3240}$ --- first place at the time, $0.034$ clear of the
+then-visible runner-up's $0.2904$.
+
+We had tried proposal-union ensembling before and it failed: a union of the
+baseline with a weaker finetune scored \emph{below} the baseline's own
+post-processed validation score ($0.587$ vs.\ $0.605$) --- the weak member's
+proposals dilute the strong member's ranking. These two experiments suggest that member strength and augmentation
+diversity matter for proposal unions; they do not establish a universal
+necessary or sufficient condition for successful ensembling.
+
+\subsection{The coarse-to-fine trap: curriculum state is part of the
+checkpoint}
+\label{sec:c2f}
+
+The most destructive pitfall of the campaign hides in the training schedule,
+not the weights. The repository's coarse-to-fine curriculum dilates the
+target masks by a radius $r \cdot \gamma^{\lfloor e/\alpha \rfloor}$ with
+$r = 0.1$\,m and $\alpha = 100$: for the first $100$ epochs of \emph{any}
+run, supervision is masks inflated by $10$\,cm. The released checkpoints
+were trained through the whole curriculum (dilation decayed to zero). A
+finetune launched from them with the curriculum enabled therefore
+\emph{restarts} it, and spends its entire budget re-teaching the model to
+predict dilated masks.
+
+This destroyed two runs before we found it. An interaction finetune
+collapsed $0.536 \to 0.008$ in \apfifty{} while AP$_{25}$ survived at $0.20$
+--- the fingerprint of masks that are right but fat. A movable full-network
+retrain jumped in score exactly when the first decay triggered at epoch
+$100$. A hybrid experiment (finetuned weights, baseline BatchNorm buffers)
+ruled out BN drift as the cause. Until the mechanism was found, these
+collapses had us concluding that ``retraining hurts'' --- a wrong lesson
+drawn from a confounded experiment, and the reason the bet of this section
+was almost never placed. The general statement: \emph{curriculum state is
+part of the checkpoint}. Finetuning must disable, or fast-forward, every
+schedule-dependent transform of the training targets.
+
+\subsection{Negative results of the extension window}
+
+The window also funded a burst of cheap experiments, most of which failed
+informatively; the bottom block of Table~\ref{tab:negative} lists them. One
+deserves prose. \texttt{v10}, a movable full-network retrain with the
+curriculum correctly disabled, reached mask \apfifty{} $0.404$ at epoch
+$184$ against the released $0.572$: fixing the trap of \S\ref{sec:c2f} was
+necessary but not sufficient on the movable side. The released weights
+carry an official $1160{+}680$-epoch schedule, and $195$ scenes at batch
+size $1$ on a single 24\,GB GPU do not close that gap in a day. The
+curriculum explains the interaction collapse; compute explains the movable
+one.
+
+\subsection{Final standings}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Leaderboard (ranking metric) & ours & \texttt{TnG} & \texttt{teamzb} & margin \\
+\midrule
+movable dev (\metric{})       & \textbf{0.5038} & --- & 0.4434 & $+0.0604$ \\
+movable test (\metric{})      & 0.4056 & \textbf{0.4828} & 0.3711 & $-0.0772$ \\
+interaction dev (\apfifty{})  & \textbf{0.6446} & --- & 0.6394 & $+0.0052$ \\
+interaction test (\apfifty{}) & 0.3286 & \textbf{0.3446} & 0.3110 & $-0.0160$ \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Final leaderboards} (2026-08-28): first on both dev boards, second on both
+test boards. Margin is ours minus the best other entry. Our final movable
+test sub-metrics: \apfifty{} $0.4668$, AP$_{50}^{\text{axis}}$ $0.4315$,
+AP$_{50}^{\text{origin}}$ $0.4328$.}
+\label{tab:final}
+\end{table}
+
+Table~\ref{tab:final} gives the final standings. The run in flight
+delivered: \texttt{mov\_v11} --- the \texttt{v5} recipe transplanted to the
+movable model (train$+$validation, flips only, curriculum off, learning
+rate $10^{-5}$) --- raised in-sample validation mask
+\apfifty{} from $0.5716$ to $0.5911$ raw ($0.6259$ after splitting) and
+full-pipeline validation joint to $0.5319$; on test, joint
+$\mathbf{0.4056}$ with \apfifty{} $0.4668$ (from $0.4444$; axis $0.4315$,
+origin $0.4328$), against $0.3760$ before it. The augmentation dividend
+transplanted to the movable model and over-delivered again. On the
+interaction side, a three-model ensemble (\texttt{v5}$+$\texttt{v6}$+$%
+\texttt{v5b}; validation $0.6513$) reached test $\mathbf{0.3286}$, our
+final score there. The movable result uses the single \texttt{mov\_v11}
+checkpoint plus the geometric and structural pipeline, not a two-model
+movable ensemble. The exact selected \texttt{mov\_v11} checkpoint epoch
+cannot be recovered consistently from the public artifacts: the working
+notes record approximately 45 epochs while an earlier report stated 60.
+We therefore do not present an exact epoch as verified.
+
+The final hours also redrew the boards: competitors who had kept their
+submissions private all month went public at the buzzer, and \texttt{TnG}
+took both test boards ($0.4828$ movable, $0.3446$ interaction). The scores alone do not establish the competitors' training procedures
+or architectures. Their methods were not evaluated in our experiments. We finished first on both dev leaderboards and
+second on both test leaderboards.
+
+\section{Limitations and Reproducibility}
+
+\textbf{Experimental scope.} This is a retrospective competition report on
+one benchmark. Repeated, unseeded inference varied by approximately
+$\pm0.002$; we did not run a controlled multi-seed factorial study. Cumulative
+results can mix checkpoint, training and post-processing changes. We identify
+specific confounds, but do not assign all final gains to isolated components.
+
+\textbf{Data reuse.} Released checkpoints and the later full-network finetunes
+use train$+$validation. That split is in-sample, and the same labels also guide
+configuration selection. Test labels were withheld, but server feedback from
+multiple submissions informed development. Neither split supports unrestricted
+claims about generalization to other scenes, datasets or motion distributions.
+
+\textbf{Geometric assumptions.} The recipe favors planar panels, vertical
+rotation axes and hinges opposite visible predicted handles. Lateral hinges,
+non-planar parts and incorrect interaction masks remain failure cases. Negative
+feature probes characterize only the measured features, samples and readouts.
+
+\textbf{Artifacts.} Source, scripts and the short competition report are
+available at \url{https://github.com/junyuan-fang/articulate3d}. Data and
+checkpoints are obtained separately. Several scripts retain machine-specific
+paths, and the migrated Conda/Docker channel specifications have not been
+rebuilt on Linux/CUDA. Exact reproduction of the final movable checkpoint is
+limited by the unresolved epoch record described in \S\ref{sec:extension}.
+The original evaluation implementation is retained for challenge comparability;
+the clipped-axis diagnostic is explicitly a separate intervention.
+
+Detailed failed configurations and additional experimental lessons are in
+Appendices~\ref{sec:negative} and~\ref{sec:lessons}.
+
+\section{Conclusion}
+
+A reproduced USDNet baseline ($0.264$ test \metric{}) reaches $0.4056$ ---
+$+54\%$ relative, first on both dev leaderboards and second on both test
+leaderboards --- in three stages (Figure~\ref{fig:progression}): one tiny
+trained head plus training-free geometric priors ($0.264 \to 0.3385$,
+$+28\%$ relative); an offline structural split of merged instances
+(\S\ref{sec:structural}); and an extension-window bet --- augmented
+finetunes on both tasks and a three-model interaction ensemble --- that
+delivered the final scores
+($\to 0.4056$; interaction $0.2686 \to 0.3286$, $+22\%$,
+\S\ref{sec:extension}). The segmentation branch stayed frozen through the
+first two stages, with one deliberate, offline exception: splitting what
+the model had merged.
+
+The final finetunes show that small changes on an in-sample validation split
+can coexist with larger test gains ($+0.004$ versus $+0.027$ for the
+interaction finetune). Both models trained on validation, so these numbers
+should not be interpreted as a controlled explanation of memorization.
+The axis head's total collapse onto
+gravity remains unsolved: it emits $[0,0,1]$ for $95.6\%$ of rotations and
+is wrong on the rest, ten interventions failed to recover the lateral
+hinges, and the $\mathbb{RP}^2$ treatment sketched in \S\ref{sec:collapse}
+is an untested direction, not a validated remedy. We hope the more than two dozen documented negative results, the
+freezing, curriculum and evaluation pitfalls, and the confounded-submission
+postmortems of \S\ref{sec:confound} and \S\ref{sec:c2f} are as useful as the
+recipe itself.
+
+\paragraph{Acknowledgments.} The solution builds on the USDNet/Articulate3D toolkit and the ScanNet++
+dataset; we thank the challenge organizers.
+
+\clearpage
+\appendix
+
+\section{Detailed Negative Results}
 \label{sec:negative}
 
 Table~\ref{tab:negative} lists every failed attempt of the campaign, one
@@ -783,13 +1225,17 @@ Each consumed real experiment time and shaped the final recipe. Four
 failures carry a mechanism instructive beyond their row; they get short
 postmortems below.
 
-\begin{table}[t]
-\centering
+\begingroup
 \footnotesize
-\begin{tabular}{@{}p{0.27\textwidth}p{0.40\textwidth}p{0.27\textwidth}@{}}
+\begin{longtable}{@{}p{0.27\textwidth}p{0.40\textwidth}p{0.27\textwidth}@{}}
 \toprule
 Attempt & Outcome & Root cause \\
 \midrule
+\endfirsthead
+\toprule
+Attempt & Outcome & Root cause \\
+\midrule
+\endhead
 \multicolumn{3}{@{}l}{\emph{Main campaign}}\\
 joint training, $3\times$ oversampling $+$ $5\times$ loss weighting &
   \metric{} $0.374 \to 0.089$ in 4 epochs &
@@ -881,12 +1327,14 @@ consensus-vote mask merging &
   \apfifty{} $0.404$ at epoch $184$ vs $0.572$ &
   compute gap, not curriculum (prose, \S\ref{sec:extension}) \\
 \bottomrule
-\end{tabular}
+
 \caption{\textbf{Every failed attempt of the campaign}, one row each; the
 bottom block covers the extension window. Entries marked (postmortem) are
 expanded below, and \texttt{v10} is discussed in \S\ref{sec:extension}.}
 \label{tab:negative}
-\end{table}
+
+\end{longtable}
+\endgroup
 
 \paragraph{Joint training with doubled rebalancing.} Oversampling
 lateral-hinge scenes $3\times$ \emph{and} weighting their loss $5\times$
@@ -931,386 +1379,12 @@ collapses \apfifty{} ($0.572 \rightarrow 0.476$; twins become false
 positives); IoU-NMS recovers most but not all ($0.549$); even a surgical
 variant that appends only non-overlapping mirrored proposals at halved
 score stays below the single-pass stack ($0.4292$ vs.\ $0.4306$
-\metric{}). TTA cannot rescue a backbone that never saw the transform.
+\metric{}). In this experiment, flip TTA did not recover the loss associated with the transformed input.
 
-\subsection{An evaluator artifact: bit-exact axes are scored as misses}
-\label{sec:oracle-artifact}
 
-This subsection documents a floating-point artifact in the official
-evaluator that makes \emph{perfect} predictions fail. It silently caps every
-oracle, and it inverts the usual assumption that an oracle measures the
-headroom of a component.
-
-The axis criterion is implemented as
-\begin{verbatim}
-deriavation = np.dot(axis_ref, axis_checked) /
-              (np.linalg.norm(axis_ref) * np.linalg.norm(axis_checked))
-is_axis = np.arccos(np.abs(deriavation)) < np.deg2rad(15)
-\end{verbatim}
-For two \emph{bit-identical} unit vectors the quotient does not evaluate to
-$1.0$: the roundings of the numerator and of the product of norms disagree,
-and the result is $1{+}1\,\text{ULP} = 1.0000000000000002$. Then $\arccos$
-returns \texttt{NaN}, and \texttt{NaN < th} is \texttt{False}. An exactly
-correct axis is recorded as a miss. Sampling generic unit vectors, $36.4\%$
-of self-comparisons overflow this way. Axes with exactly representable
-components, such as the canonical $(0,0,\pm 1)$, always give exactly $1.0$
-and are safe.
-
-That distinction is what makes the artifact so asymmetric here. Of the 236
-validation rotation axes, 206 are stored as canonical $(0,0,\pm 1)$ (the
-benchmark is gravity-dominated, cf.\ \S\ref{sec:diagnosis}), so their NaN
-rate is only $4.2\%$. None of the 154 translation axes is canonical, and
-their rate is $50.6\%$. Consequently the ideal oracle --- GT masks, GT
-classes, GT axes and GT origins, all confidences $1.0$ --- scores
-\metric{} $=0.6516$ rather than $1.0$, with mask \apfifty{} $=1.0000$ and
-AP$_{50}^{\text{origin}} =1.0000$. The entire deficit is in the axis term,
-and $90.7\%$ of it falls on translations. The evaluator applies the
-criterion in both matching directions, so each overflow costs a hard false
-negative \emph{and} a false positive ($88/390$ instances fail in the GT
-loop, $90/390$ in the prediction loop; the asymmetry is the rounding of
-$\mathbf{a}\!\cdot\!\mathbf{b}$ versus $\mathbf{b}\!\cdot\!\mathbf{a}$). The
-resulting per-class arithmetic closes exactly, e.g.\ for rotations
-$\tfrac{1}{2}\cdot\tfrac{226}{236}\cdot(1+\tfrac{226}{237}) = 0.9354$,
-matching the evaluator's reported $0.9354$.
-
-Two consequences are worth stating plainly. First, \textbf{being exactly
-right is punished}: pasting the true GT axes onto our model's own
-predictions \emph{lowers} AP$_{50}^{\text{axis}}$ from $0.4432$ to $0.3860$.
-Second, \textbf{the score depends on serialization precision}. Rounding the
-same GT axes before submission changes nothing geometrically but moves the
-oracle to $0.9951$ at \texttt{\%.6f} (the format our own submission writer
-uses), $0.9743$ at \texttt{\%.7f}, $1.0000$ at five decimals or fewer, and
-$0.7368$ when cast to \texttt{float32} --- because rounding perturbs the
-vector just enough that the quotient lands strictly below $1$. A one-line
-\texttt{np.clip(deriavation, -1.0, 1.0)} in a copy of the evaluator restores
-the ideal oracle to exactly $1.0000$ on all four sub-metrics, confirming
-that this single line accounts for $100\%$ of the gap.
-
-We verified that nothing else contributes. No GT instance is dropped by
-\texttt{min\_region\_sizes} (smallest is 16 points) or by the valid-class
-filter. GT masks are disjoint by construction (one integer per point, and
-mask \apfifty{} is exactly $1.0$). No GT axis is degenerate or flagged
-\texttt{needsReview}. Point counts agree across the annotation, the
-processed tensors and the prediction pickle for all 42 scenes, and the AP
-integration itself returns exactly $1.0$ for an all-true-positive curve at
-any confidence assignment. All measurements and the intervention are
-reproducible via \texttt{analysis/oracle\_gap.py}; the original evaluator
-was left untouched.
-
-\subsection{The axis head has collapsed completely}
-\label{sec:collapse}
-
-Re-diagnosing the deployed pipeline shows the gravity collapse is not
-partial but total. $95.6\%$ of the $2854$ predicted rotation axes are
-\emph{exactly} $[0,0,1]$, and printing the remaining $4.4\%$ against ground
-truth shows they are simply wrong. Forcing them all vertical is therefore
-free, and worth $+0.0017$ AP$_{50}^{\text{axis}}$ at zero parameters.
-
-The consequence is that rotation-axis accuracy is now a property of the data
-rather than of the model. It equals the fraction of ground-truth rotation
-axes lying within $15^\circ$ of vertical: $169/180 = 93.9\%$ on validation.
-Of the twelve failures before the snap, seven are lateral hinges (ground
-truth horizontal); four have genuinely tilted ground truth ($23.4^\circ$,
-$29.7^\circ$, $35.0^\circ$, $44.7^\circ$ from vertical --- so no snapping
-rule can reach them either); one was the single non-vertical prediction,
-which the snap fixes. With translation at $95.8\%$, articulation
-post-processing has no headroom left --- every further gain must come from
-training or from mask recall. The geometric detector, the learned selector,
-and rebalanced training all failed in instructive ways
-(\S\ref{sec:negative}). Mask recall ($70.5\%$ of GT instances matched at IoU
-$0.5$) caps \apfifty{} $=0.571$ on validation and is the largest untouched
-quantity. Our TTA experiments show it cannot be recovered at inference time
-from a backbone trained without the corresponding augmentation; unlocking it
-requires retraining the segmentation branch with the (now fixed) geometric
-augmentations, which we deliberately kept out of scope to preserve the
-leading mask quality. Events later tested both halves of that judgment: an
-offline structural split found mask gains that post-processing could still
-reach (\S\ref{sec:structural}), and a deadline extension funded precisely
-the augmentation retrain deferred here --- first on the interaction task,
-then on the movable model itself, and it paid both times
-(\S\ref{sec:extension}).
-
-One untested direction addresses the collapse at its documented cause. An
-axis is a point on $\mathbb{RP}^2$, not a free vector in $\mathbb{R}^3$, and
-our treatment of it is Euclidean throughout: per-point votes are averaged
-linearly (so opposite signs cancel, one plausible route into a single
-dominant mode), anchor residuals are added and renormalised rather than
-pushed through an exponential map, and anchor selection is a discrete
-softmax --- the same softmax whose confidence wall we showed makes the
-lateral-hinge classifier immovable. Replacing the discrete selector with
-continuous regression in the tangent space at an anchor removes that wall by
-construction, and aggregating with the leading eigenvector of
-$\sum_i a_i a_i^{\!\top}$ is the sign-correct mean on $\mathbb{RP}^2$. Taken
-further, an axis and its origin are jointly a \emph{line} in $\mathbb{R}^3$,
-whose natural home is the affine Grassmannian under Plücker coordinates ---
-which is also how the evaluator scores them, as a point-to-line distance. We
-flag this as the one remaining idea aimed at a known failure mechanism
-rather than at a symptom.
-
-\section{Structural Post-Processing: Two Doors Are Two Objects}
-\label{sec:structural}
-
-This section covers the campaign's second stage: an offline splitting of
-merged instances that lifted both tasks, and the one deliberate exception to
-the frozen-mask rule.
-
-\S\ref{sec:collapse} concluded that articulation post-processing was
-exhausted, and the frozen-mask rule of \S\ref{sec:freeze} was our guarantee
-of clean attribution. Forty-eight hours before the original deadline,
-looking at per-scene predictions rather than per-instance statistics
-surfaced a failure class no threshold sweep would have found. A disclaimer
-up front,
-applying to this section and the next: with one submission per day on each
-test leaderboard, these results are iterative competition engineering ---
-one variable at a time wherever quota allowed, server-verified wherever a
-slot existed --- not controlled ablations, and we flag every comparison that
-is confounded.
-
-The companion interaction task now enters the story as more than a handle
-source, so we restate it (cf.\ \S\ref{sec:data}): it segments interactable
-elements (handles, knobs, buttons), scored by plain mask \apfifty{} with no
-articulation term. Until this point our entry there was the released
-interaction checkpoint, unmodified: validation $0.5363$, test $0.2686$.
-
-\subsection{The failure: a merged mask corrupts everything downstream}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=\textwidth]{figs/fig_split_before_after}
-\caption{\textbf{Structural splitting, validation scene
-\texttt{5748ce6f01}.} Left: the model merges two distant, visually similar
-door leaves --- on opposite walls, $4.2$\,m apart --- into one predicted
-instance, so merging is a structural defect of the model, not a proximity
-artifact. Right: DBSCAN $\varepsilon$-connectivity separates the mask into
-its two spatial components ($5267$ and $5295$ points; centroids marked),
-and every downstream geometric quantity is then computed per leaf.}
-\label{fig:split}
-\end{figure}
-
-The model routinely merges the two leaves of a double door --- or two
-adjacent handles --- into a \emph{single} predicted instance
-(Figure~\ref{fig:split}). The direct cost is familiar: against either
-ground-truth instance the merged mask has IoU $\approx 0.5$, so both
-matches sit at the metric's threshold and usually fall below it. The
-indirect cost is worse and specific to our pipeline: every geometric prior
-of \S\ref{sec:geo} is computed \emph{on the mask}, so a merged mask's PCA
-axis runs diagonally across the pair and its ``perpendicular endpoint''
-lands in the gap between the doors. A merged instance does not merely lose
-its own point; it poisons the axis and origin that the whole method reads
-off the geometry.
-
-\subsection{The DBSCAN trio: split, filter, suppress}
-
-The fix is offline connected-component splitting. Run DBSCAN
-(\texttt{min\_samples}$=1$, so it is pure $\varepsilon$-connectivity) on the
-points of each predicted mask, emit each spatial component as its own
-instance, drop components below a minimum size, and finish with IoU-based
-NMS to remove duplicates. We call this three-step post-process the
-\emph{trio}. It runs on the dumped predictions plus the preprocessed point
-coordinates --- no GPU, no re-inference.
-
-For the movable task ($\varepsilon = 0.2$\,m, minimum $50$ points) the trio
-raises validation mask \apfifty{} $0.5716 \to 0.5801$ and, rerunning the
-geometric stack on the split masks, the joint metric $0.4621 \to 0.5021$;
-on the test server, $0.3385 \to 0.3689$ (Figure~\ref{fig:progression}). As
-the mechanism predicts, the gain concentrates in the origin term
-($0.3601 \to 0.3955$): each leaf's PCA axis and endpoint origin are finally
-computed on the right geometry. For the interaction task
-($\varepsilon = 0.075$, minimum $5$ points, NMS at IoU $0.75$), validation
-goes $0.5363 \to 0.6054$ and test $0.2686 \to 0.2864$.
-
-Splitting is the extreme case of the parameter-free regime
-(\S\ref{sec:geo}): ``two doors are two objects'' is not a fact about the
-validation split, so there is no fitted optimism to give back. On the
-movable task the transfer was indeed near-full (Figure~\ref{fig:transfer}).
-On the interaction task the same trio realised $+0.069 \to +0.018$; the
-absolute levels there differ by a factor of two ($0.54$ validation vs.\
-$0.27$ test), and \S\ref{sec:extension}'s memorization finding
-retroactively explains part of that gap --- we report the delta ratio as
-measured.
-
-\subsection{Per-class $\varepsilon$: cluster radius is element scale}
-
-A single $\varepsilon$ for the interaction task is a compromise across
-element sizes: handles are elongated, knobs and buttons are tiny. Splitting
-the radius by class --- $\varepsilon = 0.1$ for handles (class 1),
-$\varepsilon = 0.065$ for knobs/buttons (class 2) --- is one number per
-physical scale. It lifts validation $0.6054 \to 0.6253$ and test
-$0.2864 \to 0.2886$.
-
-\subsection{Cleaning the handle source}
-
-The hinge-side rule of \S\ref{sec:geo}(iii) consumes \emph{predicted} handle
-masks, and those predictions carry the same merged-instance disease, so we
-feed the movable pipeline the trio-processed interaction predictions
-instead. Validation joint metric moves $0.5021 \to 0.5038$ (origin
-$0.5393 \to 0.5411$); on test, $0.3689 \to \mathbf{0.3760}$ (origin
-$0.3955 \to 0.4026$) --- an over-delivery relative to the validation
-estimate, and our best pre-extension movable-test score. The two tasks are
-coupled:
-interaction post-processing quality is an input to movable origin
-accuracy.
-
-\subsection{A quota-timing mistake}
-
-One episode from the original deadline day is worth recording as a negative
-result about \emph{process}. Each test leaderboard allows one submission per
-day. We spent the interaction-test slot at dawn on the per-class variant
-($0.2886$). By dusk we had built a better candidate and no quota left to
-submit it, and a competitor's buzzer submission took first place at
-$0.2904$. The $0.0018$ deficit was not a modelling gap but a scheduling one.
-On a deadline day the daily submission is the day's scarcest asset, and it
-should be spent at the \emph{end} of the day, on the best artifact the day
-produced.
-
-\section{The Extension Window: Betting Against a Memorized Validation Set}
-\label{sec:extension}
-
-This section covers the final stage: a bet that the validation set
-systematically hides generalization gains, and the finetune-plus-ensemble
-that won the interaction task.
-
-The campaign should have ended there, second on one board of four. It did
-not: server outages led the organizers to extend the deadline by roughly
-24 hours, refreshing the daily submission quotas. That gave us something we
-had never had --- a test-verification window --- and we spent it on a
-hypothesis that had been unfalsifiable all month.
-
-\subsection{The bet}
-
-The released interaction checkpoint was trained on train$+$validation
-(\S\ref{sec:data}; \S\ref{sec:originhead} already noted the movable analogue
-inflates validation by $\sim$$0.01$). Its validation score of $0.536$ is
-therefore an \emph{in-sample} number: the model has seen those scenes. Any
-finetune we produce is scored \emph{out-of-sample} on that same split, so
-validation systematically underrates finetunes relative to the baseline.
-The only honest arbiter is the test server, and until the extension we
-never had the quota to use it as one.
-
-Why bet on augmentation specifically? Three earlier measurements pointed the
-same way. The released training configuration has geometric augmentation
-disabled entirely (and the repository's flip-time axis-label transform
-contains a sign bug, which we fixed). Mirrored scenes are
-out-of-distribution for the released backbone (recall $55.9\%$ vs.\
-$70.5\%$, \S\ref{sec:negative}). And our own val$\to$test transfer at
-$\sim$$1{:}3$ had the smell of a generalization deficit. A model that has
-never seen a flipped scene, evaluated on a split it memorized, is exactly
-the setting in which an augmentation dividend would be real and invisible.
-
-\subsection{\texttt{v5}: the flips-only finetune}
-
-\texttt{v5} finetunes the released interaction checkpoint on
-train$+$validation with mirror-flip augmentation, coarse-to-fine curriculum
-\emph{off} (\S\ref{sec:c2f}), learning rate $10^{-5}$, $60$ epochs, batch
-size $1$, cropping on. In-sample validation moved by $+0.004$ only
-($0.536 \to 0.540$). On test it moved by $+0.027$:
-$0.2886 \to \mathbf{0.3156}$. This is the single deepest observation of the
-campaign, and the $\sim$$700\%$ bar of Figure~\ref{fig:transfer}: the
-augmentation dividend is nearly invisible on a memorized validation set,
-because what it buys is precisely the generalization that in-sample
-evaluation cannot see. Had we trusted validation, \texttt{v5} would have
-been discarded as a wash.
-
-\subsection{\texttt{v6} and the equal-strength ensemble}
-
-\texttt{v6} repeats the recipe with random yaw rotation added. Solo it is
-weaker ($0.529$ validation) --- but its augmentation spectrum differs from
-\texttt{v5}'s, which is the property an ensemble needs. We take the union of
-\texttt{v5} and \texttt{v6} proposals, then run the per-class DBSCAN trio
-over the union with NMS at $0.55$: validation $0.6446$, test
-$\mathbf{0.3240}$ --- first place at the time, $0.034$ clear of the
-then-visible runner-up's $0.2904$.
-
-We had tried proposal-union ensembling before and it failed: a union of the
-baseline with a weaker finetune scored \emph{below} the baseline's own
-post-processed validation score ($0.587$ vs.\ $0.605$) --- the weak member's
-proposals dilute the strong member's ranking. The boundary condition the
-two experiments bracket: proposal-union ensembling works when members are
-near-equal in strength and diverse in training distortion, not otherwise.
-
-\subsection{The coarse-to-fine trap: curriculum state is part of the
-checkpoint}
-\label{sec:c2f}
-
-The most destructive pitfall of the campaign hides in the training schedule,
-not the weights. The repository's coarse-to-fine curriculum dilates the
-target masks by a radius $r \cdot \gamma^{\lfloor e/\alpha \rfloor}$ with
-$r = 0.1$\,m and $\alpha = 100$: for the first $100$ epochs of \emph{any}
-run, supervision is masks inflated by $10$\,cm. The released checkpoints
-were trained through the whole curriculum (dilation decayed to zero). A
-finetune launched from them with the curriculum enabled therefore
-\emph{restarts} it, and spends its entire budget re-teaching the model to
-predict dilated masks.
-
-This destroyed two runs before we found it. An interaction finetune
-collapsed $0.536 \to 0.008$ in \apfifty{} while AP$_{25}$ survived at $0.20$
---- the fingerprint of masks that are right but fat. A movable full-network
-retrain jumped in score exactly when the first decay triggered at epoch
-$100$. A hybrid experiment (finetuned weights, baseline BatchNorm buffers)
-ruled out BN drift as the cause. Until the mechanism was found, these
-collapses had us concluding that ``retraining hurts'' --- a wrong lesson
-drawn from a confounded experiment, and the reason the bet of this section
-was almost never placed. The general statement: \emph{curriculum state is
-part of the checkpoint}. Finetuning must disable, or fast-forward, every
-schedule-dependent transform of the training targets.
-
-\subsection{Negative results of the extension window}
-
-The window also funded a burst of cheap experiments, most of which failed
-informatively; the bottom block of Table~\ref{tab:negative} lists them. One
-deserves prose. \texttt{v10}, a movable full-network retrain with the
-curriculum correctly disabled, reached mask \apfifty{} $0.404$ at epoch
-$184$ against the released $0.572$: fixing the trap of \S\ref{sec:c2f} was
-necessary but not sufficient on the movable side. The released weights
-carry an official $1160{+}680$-epoch schedule, and $195$ scenes at batch
-size $1$ on a single 24\,GB GPU do not close that gap in a day. The
-curriculum explains the interaction collapse; compute explains the movable
-one.
-
-\subsection{Final standings}
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-Leaderboard (ranking metric) & ours & \texttt{TnG} & \texttt{teamzb} & margin \\
-\midrule
-movable dev (\metric{})       & \textbf{0.5038} & --- & 0.4434 & $+0.0604$ \\
-movable test (\metric{})      & 0.4056 & \textbf{0.4828} & 0.3711 & $-0.0772$ \\
-interaction dev (\apfifty{})  & \textbf{0.6446} & --- & 0.6394 & $+0.0052$ \\
-interaction test (\apfifty{}) & 0.3286 & \textbf{0.3446} & 0.3110 & $-0.0160$ \\
-\bottomrule
-\end{tabular}
-\caption{\textbf{Final leaderboards} (2026-08-28): first on both dev boards, second on both
-test boards. Margin is ours minus the best other entry. Our final movable
-test sub-metrics: \apfifty{} $0.4668$, AP$_{50}^{\text{axis}}$ $0.4315$,
-AP$_{50}^{\text{origin}}$ $0.4328$.}
-\label{tab:final}
-\end{table}
-
-Table~\ref{tab:final} gives the final standings. The run in flight
-delivered: \texttt{mov\_v11} --- the \texttt{v5} recipe transplanted to the
-movable model (train$+$validation, flips only, curriculum off, learning
-rate $10^{-5}$, $60$ epochs) --- raised in-sample validation mask
-\apfifty{} from $0.5716$ to $0.5911$ raw ($0.6259$ after splitting) and
-full-pipeline validation joint to $0.5319$; on test, joint
-$\mathbf{0.4056}$ with \apfifty{} $0.4668$ (from $0.4444$; axis $0.4315$,
-origin $0.4328$), against $0.3760$ before it. The augmentation dividend
-transplanted to the movable model and over-delivered again. On the
-interaction side, a three-model ensemble (\texttt{v5}$+$\texttt{v6}$+$%
-\texttt{v5b}; validation $0.6513$) reached test $\mathbf{0.3286}$, our
-final score there.
-
-The final hours also redrew the boards: competitors who had kept their
-submissions private all month went public at the buzzer, and \texttt{TnG}
-took both test boards ($0.4828$ movable, $0.3446$ interaction). Scores at
-that level indicate a fully retrained segmentation model, consistent with
-our own finding that mask quality is the sole remaining bottleneck
-(\S\ref{sec:collapse}). We finished first on both dev leaderboards and
-second on both test leaderboards.
-
-\section{Lessons}
+\clearpage
+\section{Additional Experimental Lessons}
+\label{sec:lessons}
 
 We close with the campaign's transferable lessons, each tied to the
 experiment that taught it.
@@ -1330,24 +1404,23 @@ experiment that taught it.
 \item \textbf{Match the loss to the metric.} Sign-agnostic axis loss
   ($1-|\cos|$), point-to-line origin loss, and axis normalization at
   submission time each exist because the evaluator says so.
-\item \textbf{Geometry transfers; tuned thresholds do not.} The val$\to$test
-  transfer ratio was $\sim$$3\times$ higher for parameter-free geometric
-  rules than for validation-fitted post-processing. The practical test is
+\item \textbf{Compare transfer empirically.} The val$\to$test
+  transfer ratio was $\sim$$3\times$ higher for the geometric
+  rules studied here than for validation-fitted post-processing. The practical test is
   not whether a threshold has an optimum but whether it has a
   \emph{plateau}, and stating a rule as a relation between two parts
   instead of a property of one made the whole swept range safe
-  (\S\ref{sec:geo}) --- a stronger physical claim buys robustness that no
-  amount of threshold tuning can.
-\item \textbf{An oracle proves existence, not reachability.} The predicted
-  mask always contains a point $6$\,mm from the true hinge line, so origin's
-  ceiling is $100\%$ --- and we briefly concluded that post-processing would
+  (\S\ref{sec:geo}) --- an observed plateau in this campaign, not a guarantee against
+  dataset shift.
+\item \textbf{An oracle proves existence, not reachability.} Every mask in the matched validation analysis contains a point within
+  $0.25$\,m of the hinge line (median $6$\,mm), yielding a $100\%$
+  conditional selection ceiling --- and we briefly concluded that post-processing would
   suffice. Four subsequent methods failed to select that point. An oracle
   measures the representation, not whether any available signal can pick
   the right element out of it; report the two separately.
 \item \textbf{A negative result needs power to mean anything.} We cited a
   seven-positive probe as proof that the backbone lacks lateral-hinge
-  information, and let it close a research direction for days. The properly
-  powered version agrees, which is luck, not method: with seven positives an
+  information, and let it close a research direction for days. The larger probe also found no useful predictive performance: with seven positives an
   AUC cannot distinguish absence from noise. Before retiring a direction on
   an against-the-null result, check that the null had something to reject.
 \item \textbf{Measure a representation's ceiling before building on it.}
@@ -1368,28 +1441,25 @@ experiment that taught it.
   any headroom estimate that assumes an oracle reaches $1.0$ is wrong by a
   third, and the error is concentrated on exactly the sub-task the method
   targets.
-\item \textbf{Leaderboard forensics is a research tool.} Retention-rate
-  analysis of competitors' four public numbers correctly predicted that the
-  leader's advantage was geometric rather than architectural, and pointed to
+\item \textbf{Leaderboard metrics can guide hypotheses.} Retention-rate
+  analysis of competitors' four public numbers suggested possible differences in articulation retention, and pointed to
   the exact sub-tasks (translation azimuth, hinge side) where the gap lay.
-\item \textbf{Structural fixes transfer near-fully; tuned thresholds tithe.}
-  Our final taxonomy of val$\to$test transfer has three regimes:
+\item \textbf{Structural splitting transferred substantially here.}
+  The campaign suggests three descriptive patterns of val$\to$test changes:
   validation-tuned thresholds realise $\sim$$1/3$ of their gain;
   physically-correct rules realise it in proportion to how often they fire
   on the target split; and structural fixes --- repairs of
-  distribution-independent defects like a merged double door --- transfer
-  near-fully ($+0.040 \to +0.030$ for the DBSCAN split,
+  defects like a merged double door --- transferred substantially in
+  the movable experiments ($+0.040 \to +0.030$ for the DBSCAN split,
   \S\ref{sec:structural}). Budget submissions accordingly.
-\item \textbf{A memorized validation set hides exactly the gains that
-  matter.} A checkpoint trained on train$+$validation makes validation an
-  in-sample score, and the generalization that augmentation buys is then
-  nearly invisible there ($+0.004$ val vs.\ $+0.027$ test for \texttt{v5},
-  \S\ref{sec:extension}). When quota permits, insist on held-out arbitration
-  before discarding a finetune that validation calls a wash.
-\item \textbf{Proposal-union ensembling has a boundary condition.} It worked
+\item \textbf{Separate observed transfer from its explanation.} The
+  interaction finetune changed in-sample validation by $+0.004$ and held-out
+  test by $+0.027$ (\S\ref{sec:extension}). Both baseline and finetune trained
+  on validation, so this difference cannot establish a memorization effect.
+\item \textbf{Ensemble composition mattered in these comparisons.} It worked
   with two near-equal, differently-augmented finetunes ($0.3240$ on test)
   and failed with a strong--weak pair ($0.587$ vs.\ $0.605$ on validation):
-  the union of unequal members dilutes the stronger one. Check member parity
+  the weaker member degraded the union in that comparison. Check member parity
   before spending an ensemble submission.
 \item \textbf{Curriculum state is part of the checkpoint.}
   Schedule-dependent target transforms (here, coarse-to-fine mask dilation
@@ -1404,36 +1474,6 @@ experiment that taught it.
   scheduling gap, not a modelling one (\S\ref{sec:structural}).
 \end{enumerate}
 
-\section{Conclusion}
-
-A reproduced USDNet baseline ($0.264$ test \metric{}) reaches $0.4056$ ---
-$+54\%$ relative, first on both dev leaderboards and second on both test
-leaderboards --- in three stages (Figure~\ref{fig:progression}): one tiny
-trained head plus training-free geometric priors ($0.264 \to 0.3385$,
-$+28\%$ relative); an offline structural split of merged instances
-(\S\ref{sec:structural}); and an extension-window bet --- augmented
-finetunes and ensembles on both tasks --- that delivered the final scores
-($\to 0.4056$; interaction $0.2686 \to 0.3286$, $+22\%$,
-\S\ref{sec:extension}). The segmentation branch stayed frozen through the
-first two stages, with one deliberate, offline exception: splitting what
-the model had merged.
-
-The deepest single observation belongs to the last stage. A released
-checkpoint trained on validation makes validation nearly blind to
-generalization gains --- our mirror-flip finetune moved the memorized split
-by $+0.004$ and the test set by $+0.027$ --- so held-out arbitration is
-worth paying submission quota for. The axis head's total collapse onto
-gravity remains unsolved: it emits $[0,0,1]$ for $95.6\%$ of rotations and
-is wrong on the rest, ten interventions failed to recover the lateral
-hinges, and the $\mathbb{RP}^2$ treatment sketched in \S\ref{sec:collapse}
-is still the one untested idea aimed at the mechanism rather than the
-symptom. We hope the more than two dozen documented negative results, the
-freezing, curriculum and evaluation pitfalls, and the confounded-submission
-postmortems of \S\ref{sec:confound} and \S\ref{sec:c2f} are as useful as the
-recipe itself.
-
-\paragraph{Acknowledgments.} The solution builds on the USDNet/Articulate3D toolkit and the ScanNet++
-dataset; we thank the challenge organizers.
 
 \bibliographystyle{plain}
 \bibliography{refs}

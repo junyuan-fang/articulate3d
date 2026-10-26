@@ -38,25 +38,28 @@ Junyuan Fang & Independent Researcher & \texttt{fangjunyuan1@gmail.com} \\
 \end{tabular}
 
 \smallskip
+{\small
 \noindent Final standing (boards frozen 2026-08-28): \textbf{1st} on Movable-dev (\metric{} $=0.5038$) and Interaction-dev (\apfifty{} $=0.6446$);
 \textbf{2nd} on Movable-test ($0.4056$) and Interaction-test ($0.3286$).
-A full write-up with all ablations and negative results is available on request (``Geometry Beats Regression: A Diagnosis-Driven, Almost-Training-Free Recipe for Scene-Level Articulated Part Understanding'').
+The extended report, ``Geometric Refinement and Structural Post-Processing for Scene-Level Articulated Part Understanding,'' is publicly available in \href{https://github.com/junyuan-fang/articulate3d/blob/master/paper/main.pdf}{the code repository}.\par}
 
 \section*{Method}
 
-Our recipe (Fig.~\ref{fig:recipe}) keeps the official USDNet baseline almost entirely frozen and improves the ranking metric
-\metric{} $=$ \apfifty{} $\times$ axis $\times$ origin by fixing the two articulation factors, which per-instance error forensics showed to fail for different reasons: the regressed \emph{axis} collapses onto the dominant gravity-aligned mode, and the regressed \emph{origin} shrinks toward the part centroid.
+The initial recipe (Fig.~\ref{fig:recipe}) freezes the official USDNet segmentation pathway; later full-network finetuning is a separate stage. The movable ranking metric is joint AP under mask, axis and origin matching constraints. Per-instance error analysis indicated different failure patterns: the regressed \emph{axis} collapses onto the dominant gravity-aligned mode, and the regressed \emph{origin} shrinks toward the part centroid.
 
+\begingroup\small
 \begin{enumerate}[leftmargin=*]
-\item \textbf{Frozen segmentation.} Minkowski U-Net backbone, Mask3D decoder, mask head and class head are kept at the released weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint and every change is cleanly attributable.
+\item \textbf{Initial frozen segmentation.} Minkowski U-Net backbone, Mask3D decoder, mask head and class head are kept at the released weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint for articulation-only edits. Structural splitting and later full-network finetuning explicitly change the mask predictions.
 \item \textbf{One trained component.} An 88\,K-parameter attention-pooled origin head is finetuned with everything else frozen. Two silent pitfalls we hit and fixed: (a) frozen parameters do not stop BatchNorm buffers from drifting, which fakes gains on validation; (b) resuming a released checkpoint restarts USDNet's coarse-to-fine mask curriculum, which dilates the GT masks by 0.1\,m for 100 epochs and destroys the model unless disabled.
-\item \textbf{Training-free geometry overwrites the regressors.} Translation axis $=$ PCA panel normal of the predicted mask, or in-plane if a sliding partner leaf exists; rotation axis forced vertical; rotation origin $=$ mask endpoint perpendicular to the axis, on the side opposite the predicted handle (handles come from the companion interactable-part model). This alone takes test \metric{} from $0.264$ to $0.3385$ with the segmentation branch untouched.
-\item \textbf{Structural post-processing (both tasks).} The model routinely merges the two leaves of a double door into one instance. Offline DBSCAN connected-component splitting $+$ fragment filter $+$ NMS, tuned with the official evaluator on validation, transfers nearly in full to test (movable $0.3385\!\to\!0.3760$; interaction $0.2686\!\to\!0.2886$).
-\item \textbf{Deadline-day retrain and ensemble.} A mirror-flip finetune of the released checkpoint (flip augmentation, curriculum off, LR $10^{-5}$) gained only $+0.004$ on validation but $+0.027$ on test; an equal-weight ensemble of three such models (interaction) and the same recipe transplanted to the movable model gave the final $0.4056$ / $0.3286$.
+\item \textbf{Training-free geometry overwrites the regressors.} Translation axis $=$ PCA panel normal of the predicted mask, or in-plane if a sliding partner leaf exists; rotation axis forced vertical; rotation origin $=$ mask endpoint perpendicular to the axis, on the side opposite the predicted handle (handles come from the companion interactable-part model). The initial head-plus-geometry recipe takes test \metric{} from $0.264$ to $0.3385$ with the segmentation branch untouched.
+\item \textbf{Structural post-processing (both tasks).} The model routinely merges the two leaves of a double door into one instance. Offline DBSCAN connected-component splitting $+$ fragment filter $+$ NMS, tuned with the official evaluator on validation, improves test scores (movable $0.3385\!\to\!0.3760$; interaction $0.2686\!\to\!0.2886$).
+\item \textbf{Full-network finetuning and ensemble.} Later train$+$validation finetunes update the full network with flip augmentation and the curriculum disabled. Interaction: the \texttt{v5}$+$\texttt{v6} union reaches $0.3240$; adding \texttt{v5b} gives $0.3286$. Movable: a single \texttt{mov\_v11} checkpoint with geometric and structural refinement gives $0.4056$. Validation is in-sample; these cumulative competition gains are not controlled multi-seed ablations.
 \end{enumerate}
+\endgroup
 
 \begin{figure}[h]
 \centering
+\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
   box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt,
@@ -90,10 +93,11 @@ Our recipe (Fig.~\ref{fig:recipe}) keeps the official USDNet baseline almost ent
 \node[geonode=34mm, below=11mm of grot] (dbs) {\textbf{DBSCAN structural split}\\\scriptsize connected components $+$ fragment filter $+$ NMS};
 \draw[ar] (gtr.south) -- (dbs.north); \draw[ar] (grot.south) -- (dbs.north); \draw[ar] (gor.south) -- (dbs.north);
 \draw[ar] (mh.south) |- (dbs.west);
-\node[box=34mm, below=6mm of dbs, draw=frozengray, fill=white] (out) {\metric{} $=$ \apfifty{} $\times$ axis $\times$ origin};
+\node[box=34mm, below=6mm of dbs, draw=frozengray, fill=white] (out) {part masks, types,\\axes and origins};
 \draw[ar] (dbs) -- (out);
-\end{tikzpicture}
-\caption{\textbf{Method overview.} Grey: frozen at released weights. Blue: the only trained component. Green: training-free geometry read off the predicted masks and the offline structural post-processing.}
+\end{tikzpicture}%
+}
+\caption{\textbf{Method overview.} Initial frozen-model stage only. Grey: frozen at released weights. Blue: the trained origin component. Green: training-free geometry read off the predicted masks and the offline structural post-processing.}
 \label{fig:recipe}
 \end{figure}
 

@@ -1,5 +1,7 @@
 # Articulate3D Challenge (OpenSUN3D @ ECCV 2026, Track 3)
 
+[Official challenge results](https://opensun3d.github.io/#winners) · [Full report](paper/main.pdf) · [Short report](paper/tech_report/tech_report.pdf) · [Citation](#citation)
+
 Solution, technical report, and reproducible environment for the Articulate3D challenge:
 segment every movable / interactable part in a ScanNet++ indoor scan and predict its
 articulation (rotation / translation, axis, origin).
@@ -15,12 +17,15 @@ articulation (rotation / translation, axis, origin).
 
 ## Method in one paragraph
 
-Frozen USDNet backbone / decoder / mask head (BatchNorm statistics included), one trained
-88K-parameter attention-pooled origin head, training-free geometric priors that overwrite the
-regressed axis / origin (panel-PCA translation axis, vertical rotation axis, origin snapped to
-the mask endpoint opposite the handle), offline DBSCAN connected-component splitting + fragment
-filter + NMS, then a mirror-flip finetune and an equal-weight two-model ensemble on deadline day.
-Full write-up: `paper/main.pdf` (LaTeX source `paper/main.tex`).
+The initial geometry-based recipe freezes the USDNet backbone, decoder, mask and class heads
+(including BatchNorm statistics), trains an 88K-parameter attention-pooled origin head, and
+refines articulation with geometric priors: panel-PCA translation axes, vertical rotation axes,
+and origins snapped to the mask endpoint opposite the handle. Offline DBSCAN splitting,
+fragment filtering and NMS refine the instances. The final stage additionally finetunes the
+network with augmentation: `mov_v11` reaches **0.4056** on movable test, while the three-model
+interaction ensemble (`v5` + `v6` + `v5b`) reaches **0.3286**. The earlier two-model interaction
+ensemble reached **0.3240**.
+Full write-up: [long report](paper/main.pdf) (LaTeX source [main.tex](paper/main.tex)).
 
 ## Method pipeline
 
@@ -127,6 +132,24 @@ pickles, EvalAI tokens. Paths inside scripts still point at the original machine
 
 The solution builds on the USDNet / Articulate3D codebase and the ScanNet++ dataset. Thanks also
 to the OpenSUN3D challenge organizers for running the challenge and the evaluation server.
+
+## Citation
+
+If you find this code or our geometric refinement approach useful in your research,
+please consider citing this repository:
+
+```bibtex
+@software{fang_articulate3d_challenge,
+  author = {Fang, Junyuan},
+  title = {{Articulate3D Challenge (OpenSUN3D at ECCV 2026, Track 3)}},
+  url = {https://github.com/junyuan-fang/articulate3d}
+}
+```
+
+The repository citation is also available through [CITATION.cff](CITATION.cff).
+For reproducibility, record the commit used alongside the citation. The reports are
+available above; a paper citation will be added when a formal publication identifier
+is available. No arXiv identifier or DOI has been assigned in this repository.
 
 ## License
 
