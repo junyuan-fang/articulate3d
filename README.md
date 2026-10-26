@@ -6,6 +6,8 @@ Solution, technical report, and reproducible environment for the Articulate3D ch
 segment every movable / interactable part in a ScanNet++ indoor scan and predict its
 articulation (rotation / translation, axis, origin).
 
+**Runner-up (2nd place) — Track 3: Interaction Understanding (Articulate3D), OpenSUN3D Workshop at ECCV 2026.**
+
 ## Final standing (leaderboards frozen 2026-08-28)
 
 | Board | Ranking metric | Ours | Rank | Baseline (USDNet) |
@@ -14,6 +16,15 @@ articulation (rotation / translation, axis, origin).
 | Movable — test | AP50_axis_origin | **0.4056** | 2nd (TnG 0.4828) | 0.2640 |
 | Interaction — dev  | AP50 | **0.6446** | 1st | — |
 | Interaction — test | AP50 | **0.3286** | 2nd (TnG 0.3446) | 0.2686 |
+
+## Award certificate
+
+<p align="center">
+  <a href="docs/award/opensun3d_eccv2026_track3_2nd_place.pdf">
+    <img src="docs/award/opensun3d_eccv2026_track3_2nd_place.png" width="560"
+         alt="OpenSUN3D Workshop Challenge at ECCV 2026, Track 3 second-place certificate for Junyuan Fang (Independent Researcher)">
+  </a>
+</p>
 
 ## Method in one paragraph
 
@@ -115,18 +126,6 @@ Also: whole-scene inference needs >9 GB, so do not run it next to training; and 
 Datasets (ScanNet++, Articulate3D annotations), preprocessed data, checkpoints, prediction
 pickles, EvalAI tokens. Paths inside scripts still point at the original machine layout
 (`/data/challenge/...`); adjust as needed.
-
-## Award
-
-**2nd place, Track 3 (Interaction Understanding)**, OpenSUN3D Workshop Challenge, ECCV 2026
-(Malmö, 8 September 2026).
-
-<p align="center">
-  <a href="docs/award/opensun3d_eccv2026_track3_2nd_place.pdf">
-    <img src="docs/award/opensun3d_eccv2026_track3_2nd_place.png" width="640"
-         alt="OpenSUN3D Workshop Challenge @ ECCV 2026 - Track 3 second-place certificate, Junyuan Fang (Independent Researcher)">
-  </a>
-</p>
 
 ## Acknowledgement
 

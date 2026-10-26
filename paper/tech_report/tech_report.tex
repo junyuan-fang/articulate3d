@@ -20,13 +20,26 @@
 \newcommand{\apfifty}{AP$_{50}$}
 
 \title{\vspace{-8mm}Articulate3D Challenge --- Technical Report\\
-\large Frozen USDNet, Geometric Priors, and Structural Post-Processing}
+\large 2nd Place on Both Test Leaderboards\\
+\normalsize Frozen USDNet, Geometric Priors, and Structural Post-Processing}
 \author{Junyuan Fang}
 \date{September 2026}
 
 \begin{document}
 \maketitle
 \vspace{-6mm}
+
+\begin{abstract}
+Articulate3D evaluates scene-level movable-part articulation and
+interaction-element segmentation~\cite{halacheva2025articulate3d}. Starting
+from released USDNet checkpoints, we combine geometric refinement and
+structural mask splitting with later full-network flip finetuning and
+ensembling. Final test scores are $0.4056$ on the movable ranking metric and
+$0.3286$ AP$_{50}$ on interaction, placing second on both test leaderboards.
+Validation is in-sample. Test ground-truth annotations were not accessed
+directly, but server scores and unlabeled test predictions informed
+development.
+\end{abstract}
 
 \section*{Team}
 \begin{tabular}{@{}lll@{}}
@@ -45,14 +58,14 @@ The extended report, ``Geometric Refinement and Structural Post-Processing for S
 
 \section*{Method}
 
-The initial recipe (Fig.~\ref{fig:recipe}) freezes the official USDNet segmentation pathway; later full-network finetuning is a separate stage. The movable ranking metric is joint AP under mask, axis and origin matching constraints. Per-instance error analysis indicated different failure patterns: the regressed \emph{axis} collapses onto the dominant gravity-aligned mode, and the regressed \emph{origin} shrinks toward the part centroid.
+Movable-part matches require mask IoU above $0.5$, sign-invariant axis error below $15^\circ$, and (for rotations) origin-to-axis-line distance below $0.25$\,m. The interaction metric is mask AP$_{50}$. Baseline errors show axis regression collapsing toward gravity and origins shrinking toward part centroids.
 
 \begingroup\small
 \begin{enumerate}[leftmargin=*]
-\item \textbf{Initial frozen segmentation.} Minkowski U-Net backbone, Mask3D decoder, mask head and class head are kept at the released weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint for articulation-only edits. Structural splitting and later full-network finetuning explicitly change the mask predictions.
-\item \textbf{One trained component.} An 88\,K-parameter attention-pooled origin head is finetuned with everything else frozen. Two silent pitfalls we hit and fixed: (a) frozen parameters do not stop BatchNorm buffers from drifting, which fakes gains on validation; (b) resuming a released checkpoint restarts USDNet's coarse-to-fine mask curriculum, which dilates the GT masks by 0.1\,m for 100 epochs and destroys the model unless disabled.
-\item \textbf{Training-free geometry overwrites the regressors.} Translation axis $=$ PCA panel normal of the predicted mask, or in-plane if a sliding partner leaf exists; rotation axis forced vertical; rotation origin $=$ mask endpoint perpendicular to the axis, on the side opposite the predicted handle (handles come from the companion interactable-part model). The initial head-plus-geometry recipe takes test \metric{} from $0.264$ to $0.3385$ with the segmentation branch untouched.
-\item \textbf{Structural post-processing (both tasks).} The model routinely merges the two leaves of a double door into one instance. Offline DBSCAN connected-component splitting $+$ fragment filter $+$ NMS, tuned with the official evaluator on validation, improves test scores (movable $0.3385\!\to\!0.3760$; interaction $0.2686\!\to\!0.2886$).
+\item \textbf{Initial frozen segmentation.} Minkowski U-Net backbone~\cite{choy2019minkowski}, Mask3D decoder~\cite{schult2023mask3d}, mask head and class head are kept at the released weights, \emph{including BatchNorm running statistics}. \apfifty{} is therefore bit-identical to the baseline within a checkpoint for articulation-only edits. Structural splitting and later full-network finetuning explicitly change the mask predictions.
+\item \textbf{One trained component.} An 88\,K-parameter attention-pooled origin head (scoring MLP plus origin MLP) is finetuned with the rest of the network frozen. The comparison measures this changed head under a frozen-backbone setup; it does not isolate attention aggregation alone. Two implementation issues affected early runs: (a) BatchNorm buffers can drift during training and confound validation comparisons even when parameters are frozen; (b) resuming a released checkpoint restarts USDNet's coarse-to-fine mask curriculum, which dilates the GT masks by 0.1\,m for 100 epochs and caused severe training degradation unless disabled.
+\item \textbf{Training-free geometric refinement.} Translation axes use the predicted mask's PCA panel normal, or an in-plane direction when a sliding partner leaf exists; rotation axes are forced vertical. Rotation origins are snapped to a mask endpoint perpendicular to the axis. If a predicted handle is near the part, the endpoint farther from it is selected; otherwise the endpoint nearest the model's predicted origin is used. Handles come from the companion interactable-part model. The initial head-plus-geometry recipe takes test \metric{} from $0.264$ to $0.3385$ with the segmentation branch untouched.
+\item \textbf{Structural post-processing (both tasks).} The model routinely merges the two leaves of a double door into one instance. Offline DBSCAN~\cite{ester1996dbscan} connected-component splitting $+$ fragment filter $+$ NMS, tuned with the official evaluator on validation, improves test scores (movable $0.3385\!\to\!0.3760$; interaction $0.2686\!\to\!0.2886$).
 \item \textbf{Full-network finetuning and ensemble.} Later train$+$validation finetunes update the full network with flip augmentation and the curriculum disabled. Interaction: the \texttt{v5}$+$\texttt{v6} union reaches $0.3240$; adding \texttt{v5b} gives $0.3286$. Movable: a single \texttt{mov\_v11} checkpoint with geometric and structural refinement gives $0.4056$. Validation is in-sample; these cumulative competition gains are not controlled multi-seed ablations.
 \end{enumerate}
 \endgroup
@@ -117,5 +130,40 @@ Relative to baseline & $+54\%$ & $+22\%$ \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\pagebreak
+\smallskip
+\noindent Validation is in-sample for the released checkpoints and later
+finetunes. Test ground-truth annotations were not accessed directly; repeated
+server scores and review of unlabeled test predictions informed development,
+including the sliding-panel height filter.
+
+\begin{thebibliography}{9}
+\bibitem{halacheva2025articulate3d}
+A.-M. Halacheva, Y. Miao, J.-N. Zaech, X. Wang, L. Van Gool, and D. P. Paudel.
+\newblock Articulate3D: Holistic Understanding of 3D Scenes as Universal Scene
+Description.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on
+Computer Vision}, 2025, pp. 5633--5644.
+
+\bibitem{choy2019minkowski}
+C. Choy, J. Gwak, and S. Savarese.
+\newblock 4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural Networks.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition}, 2019.
+
+\bibitem{schult2023mask3d}
+J. Schult, F. Engelmann, A. Hermans, O. Litany, S. Tang, and B. Leibe.
+\newblock Mask3D: Mask Transformer for 3D Semantic Instance Segmentation.
+\newblock In \emph{Proceedings of the IEEE International Conference on
+Robotics and Automation}, 2023.
+
+\bibitem{ester1996dbscan}
+M. Ester, H.-P. Kriegel, J. Sander, and X. Xu.
+\newblock A Density-Based Algorithm for Discovering Clusters in Large Spatial
+Databases with Noise.
+\newblock In \emph{Proceedings of the Second International Conference on
+Knowledge Discovery and Data Mining}, 1996, pp. 226--231.
+\end{thebibliography}
 
 \end{document}

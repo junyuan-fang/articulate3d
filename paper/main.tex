@@ -33,7 +33,6 @@ for Scene-Level Articulated Part Understanding}
 
 \begin{document}
 \maketitle
-\begin{center}\small Technical report; preprint draft. No arXiv identifier has been assigned.\end{center}
 
 \begin{abstract}
 We present a diagnosis-driven solution to the Articulate3D challenge at
@@ -168,9 +167,10 @@ detail worth $+0.018$ \metric{} on validation by itself.
 \label{sec:data}
 
 Everything in this paper runs on organizer-provided artifacts; we used no
-external data. The Articulate3D annotations cover 279 ScanNet++ v1 indoor
-scenes with 6349 articulations (4687 rotation, 1662 translation). They
-comprise: movable-part instance masks with per-part articulation parameters
+external data. The challenge covers 279 ScanNet++ v1 indoor scenes. The
+released labeled train and validation annotations contain 6,349 articulations
+(4,687 rotation, 1,662 translation) across 237 scenes; test labels are
+withheld. They comprise: movable-part instance masks with per-part articulation parameters
 (type, axis, origin) for the main task; interaction-element instance masks
 (handles, knobs, buttons) for the companion task; and a USD scene-hierarchy
 annotation, which we did not use. The official split is 195 train / 42
@@ -314,6 +314,7 @@ interventions without implying that their AP gains must add.
 \draw[ar] (ah.south) -- (gtr.north);
 \draw[ar] (ah.south) -- (grot.north);
 \draw[ar] (oh.south) -- (gor.north);
+\draw[ar] (mh.south) |- (gtr.west);
 
 % handles come from the companion task; kept to the right of the origin rule
 % so the arrow does not have to cross the other two geometry boxes
@@ -345,9 +346,11 @@ construction. Exactly one component is trained --- an $88$\,K-parameter
 attention-pooled origin head, with BatchNorm statistics pinned
 (\S\ref{sec:freeze}). The articulation parameters that the metric actually
 scores are then \emph{overwritten} by training-free geometry read off the
-predicted mask: the axis head's own output survives only as the anchor prior
-inside the dashed box. Handle masks for the hinge-side rule come from the
-challenge's companion interactable-part task.}
+predicted mask: the axis head's output acts as an agreement prior for the
+translation panel normal, while rotation axes are forced vertical. The origin
+head output chooses an endpoint only when no nearby handle is available;
+otherwise the endpoint opposite the handle is selected. Handle masks come
+from the challenge's companion interactable-part task.}
 \label{fig:pipeline}
 \end{figure*}
 
@@ -401,8 +404,10 @@ bit-identical.}
 
 We replace the mean over mask points with a learned attention pooling:
 $88$K parameters, a scoring MLP plus the original origin MLP. It trains with
-everything else frozen as in \S\ref{sec:freeze}, so any change in \metric{}
-is attributable to the aggregation alone. Training uses the metric-aligned
+the rest of the network frozen as in \S\ref{sec:freeze}. This comparison
+therefore measures the changed origin head under that frozen-backbone setup;
+it does not isolate attention aggregation from the accompanying MLP change.
+Training uses the metric-aligned
 point-to-line loss and a sign-agnostic $1-|\cos|$ axis loss --- the metric
 takes $|\cos|$, and penalizing a $180^\circ$ flip with maximum loss fights
 the evaluator. The head trains on the 195 train scenes only. The released
@@ -460,32 +465,27 @@ planar and of matching height. On validation the plane offset separates the
 two classes without overlap: the in-plane cases sit at $0.008$--$0.035$\,m,
 the drawer-like ones at $0.000$, $0.089$, $0.245$, $1.30$ and $1.84$\,m.
 
-One further condition is invisible on validation: a sliding leaf must be
-door-sized. A row of drawer fronts is also same-height and near-coplanar,
-so the pair test alone accepts it, and on the test split the rule was
-rotating $0.23$\,m and $0.33$\,m panels --- one of them the highest-scoring
-prediction in its scene --- until we added a $0.45$\,m floor on leaf
-height. Every true in-plane case on validation is at least $0.50$\,m tall,
-so the floor leaves the validation score bit-identical. A validation sweep
-cannot discover this kind of condition: the split simply contains no
-counterexample.
+The validation split contains no counterexample for the height filter:
+all true in-plane cases there are at least $0.50$\,m tall. Review of
+unlabeled test predictions showed false positives on smaller drawer-like
+panels, so we added a $0.45$\,m minimum height. This rule refinement used
+test inputs but no test labels; it leaves the validation score unchanged.
 
-The rule's validation gain does not transfer in proportion, and the reason
-is visible before submitting: it fires $91$ times on the $41$ validation
-scenes but only $35$ times on the $42$ test scenes, because eight of its
-nine validation positives come from one wardrobe. The $+0.021$ it earns
-there measures how much sliding furniture that split contains.
-Plateau-checking guards against a threshold being fitted to the data;
-nothing guards against the \emph{phenomenon} being concentrated in it.
+The pairwise rule fires $91$ times across the $41$ validation scenes and
+$35$ times across the $42$ test scenes. Eight of its nine validation
+positives come from one wardrobe, so the validation gain of $+0.021$ is
+specific to that split's scene composition and should not be expected to
+transfer proportionally. A threshold plateau does not address this
+scene-level concentration.
 
 Requiring the partner to be planar and height-matched --- rather than testing
-only whether the part itself is flat --- is what makes this safe. The
-one-sided version peaks higher at a planarity threshold of $0.05$ but falls
-\emph{below} the no-flip baseline at $0.03$ and $0.08$; eight of its nine
-positives come from a single validation scene, so it is fitted to one piece
-of furniture. Stating the pair symmetrically flattens the surface: with a
-height tolerance of $0.15$, every planarity threshold from $0.03$ to $0.35$
-improves \metric{}, by between $+0.004$ and $+0.021$.
+only whether the part itself is flat --- produced a broader validation
+plateau. The one-sided version peaks at a planarity threshold of $0.05$ but
+falls below the no-flip baseline at $0.03$ and $0.08$; its positives are
+concentrated in a single validation scene. The symmetric pair rule, with a
+height tolerance of $0.15$, improves validation \metric{} across planarity
+thresholds from $0.03$ to $0.35$. These validation results do not establish
+transfer to other scene distributions.
 
 \textbf{(ii) Rotation origin $=$ perpendicular endpoint.} We snap each
 rotation origin to one of the two robust ($5/95\%$ quantile) endpoints of the
@@ -519,10 +519,30 @@ the challenge server bit-for-bit (verified on two submissions). Inference is
 nondeterministic (unseeded); repeated runs vary by $\pm 0.002$, which we
 treat as the noise floor.
 
+The final submitted configurations are summarized here before the experiment
+history. Movable uses one full-network checkpoint followed by geometric and
+structural refinement; interaction uses a three-model ensemble followed by
+the per-class structural pipeline. Checkpoint provenance and training details
+are given in \S\ref{sec:extension}.
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Task & Final submitted configuration & Test score \\
+\midrule
+Movable & \texttt{mov\_v11} + geometry + structural split & $0.4056$ joint AP \\
+Interaction & \texttt{v5} + \texttt{v6} + \texttt{v5b} ensemble & $0.3286$ AP$_{50}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 In the initial recipe and its post-processing studies, the backbone, decoder
 and mask head retain the released USDNet weights; the full-network
-finetunes of \S\ref{sec:extension} are an explicit exception. Thus, so \apfifty{} is constant across post-processing changes
-\emph{within} a checkpoint. It is not constant across checkpoints. Our
+finetunes of \S\ref{sec:extension} are an explicit exception. When a
+post-processing step changes articulation parameters only and preserves
+masks, classes, and confidence scores, \apfifty{} is unchanged. Mask-changing
+steps such as DBSCAN splitting, or changes to classes or scores, can change
+it. Our
 train$+$val origin retrain leaves the predicted masks byte-identical but
 alters \texttt{pred\_classes} and \texttt{pred\_scores}; because average
 precision depends on the confidence ranking and the per-class grouping,
@@ -560,16 +580,18 @@ full recipe                           & 0.4370 & 0.4060 & 0.3601 & 0.3345 \\
 $+$ leaf flip $+$ vertical rotation axes & 0.4370 & 0.4101 & 0.3601 & 0.3385 \\
 $+$ DBSCAN structural split (\S\ref{sec:structural}) & 0.4444 & 0.4105 & 0.3955 & 0.3689 \\
 \textbf{$+$ cleaned handle source (best pre-extension)} & \textbf{0.4444} & 0.4105 & \textbf{0.4026} & \textbf{0.3760} \\
+\textbf{Final movable submission (\S\ref{sec:extension})} & \textbf{0.4668} & \textbf{0.4315} & \textbf{0.4328} & \textbf{0.4056} \\
 \midrule
 Leaderboard leader (concurrent, pre-extension) & 0.4352 & \textbf{0.4135} & 0.3547 & 0.3360 \\
 Runner-up (pre-extension board)       & --- & --- & --- & 0.3393 \\
 \bottomrule
 \end{tabular}
-\caption{\textbf{Main results.} All rows above the DBSCAN split keep the
-segmentation branch frozen; \apfifty{} is constant \emph{within} a checkpoint,
-but not across them (the train$+$val retrain leaves masks byte-identical while
-altering \texttt{pred\_classes} and \texttt{pred\_scores}, which moves
-\apfifty{} to $0.4366$). The leaf-flip row stood first on the ranking metric
+\caption{\textbf{Main results.} Rows through the best pre-extension entry
+keep the segmentation branch frozen except for the deliberate DBSCAN mask
+split; final full-network finetuning follows in the last row. Articulation-only
+post-processing preserves \apfifty{} when masks, classes, and scores are
+fixed. The train$+$val retrain leaves masks byte-identical but changes classes
+and scores, moving \apfifty{} to $0.4366$. The leaf-flip row stood first on the ranking metric
 at the time, ahead of the concurrent leader by $0.0024$; it differs from the
 \emph{full recipe} row only in translation and rotation axes --- \apfifty{}
 and AP$_{50}^{\text{origin}}$ return bit-identical to seven decimals, so its
@@ -577,8 +599,8 @@ $+0.0041$ axis gain is attributable to those two rules alone
 (\S\ref{sec:confound}). The DBSCAN structural split is the single deliberate
 mask-touching operation before full-network finetuning (\S\ref{sec:structural}); the
 cleaned-handle row is our best pre-extension score, $0.0367$ ahead of the
-pre-extension runner-up. The deadline-day retrain that supersedes it
-appears in \S\ref{sec:extension} and Table~\ref{tab:final}. Validation
+pre-extension runner-up. The final movable retrain that supersedes it is
+included above and detailed in \S\ref{sec:extension} and Table~\ref{tab:final}. Validation
 axis sub-metrics for the split rows were not re-measured in isolation
 (---).}
 \label{tab:main}
@@ -586,15 +608,43 @@ axis sub-metrics for the split rows were not re-measured in isolation
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\textwidth]{figs/fig_test_progression}
+\begin{tikzpicture}[x=1.12cm,y=1.0cm, font=\scriptsize]
+% Both panels show the full trajectory through the final submitted score.
+\begin{scope}
+\node[anchor=west,font=\small\bfseries] at (0,2.25) {Movable task --- joint AP};
+\draw[gray!65] (0,0) -- (6.2,0);
+\draw[dashed,gray] (0,0.91) -- (6.2,0.91);
+\draw[blue!75!black,thick] plot coordinates {(0,0.20) (1.5,0.91) (3,1.20) (4.5,1.28) (6,1.57)};
+\foreach \x/\y/\lab/\pos in {
+  0/0.20/{Base\\0.2640}/below,
+  1.5/0.91/{Geometry\\0.3385}/above,
+  3/1.20/{Split\\0.3689}/above,
+  4.5/1.28/{Handles\\0.3760}/below,
+  6/1.57/{Final\\0.4056}/above}
+  {\fill[blue!75!black] (\x,\y) circle (1.5pt);
+   \node[\pos,align=center] at (\x,\y) {\lab};}
+\end{scope}
+\begin{scope}[xshift=7.45cm]
+\node[anchor=west,font=\small\bfseries] at (0,2.25) {Interaction task --- AP$_{50}$};
+\draw[gray!65] (0,0) -- (6.2,0);
+\draw[dashed,gray] (0,0.43) -- (6.2,0.43);
+\draw[teal!75!black,thick] plot coordinates {(0,0.20) (1.5,0.42) (3,0.72) (4.5,0.81) (6,0.86)};
+\foreach \x/\y/\lab/\pos in {
+  0/0.20/{Base\\0.2686}/below,
+  1.5/0.42/{Split\\0.2886}/below,
+  3/0.72/{v5\\0.3156}/above,
+  4.5/0.81/{v5+v6\\0.3240}/below,
+  6/0.86/{3-model\\0.3286}/above}
+  {\fill[teal!75!black] (\x,\y) circle (1.5pt);
+   \node[\pos,align=center] at (\x,\y) {\lab};}
+\end{scope}
+\end{tikzpicture}
 \caption{\textbf{Official test-score trajectories}; every point is a
-server-returned score. Left, movable task: $0.2640$ (baseline)
-$\to 0.3385$ (geometric recipe) $\to 0.3689$ (DBSCAN split) $\to 0.3760$
-(cleaned handle source). Right, interaction task: $0.2686 \to 0.2886$
-(per-class trio) $\to 0.3156$ (\texttt{v5} finetune) $\to 0.3240$
-(ensemble). Dashed lines mark the best visible competitor at the original
-deadline ($0.3393$ and $0.2904$). A deadline-day retrain later raised our
-final scores to $0.4056$/$0.3286$ (\S\ref{sec:extension}).}
+server-returned score. The final movable result is $0.4056$ after the
+\texttt{mov\_v11} finetune and geometric/structural refinement. The final
+interaction result is $0.3286$ from the three-model ensemble. Earlier stages
+are included for context; dashed lines mark the original-deadline competitors (0.3393 movable,
+0.2904 interaction). See \S\ref{sec:extension} for the final configurations.}
 \label{fig:progression}
 \end{figure}
 
@@ -651,7 +701,9 @@ translation ($n{=}95$) & 91.6\% & --- & 91.6\% \\
 \end{tabular}
 \end{center}
 
-Rotation failures decompose as 5 axis-only, \textbf{23 origin-only}, 7 both.
+Rotation failures in this deployed-stack match set decompose as 5 axis-only,
+\textbf{23 origin-only}, 7 both. The axis-pass rate is $93.3\%$ in this
+breakdown; the component counts are reported for this evaluator match set.
 After the geometric axis work, origin dominates the residual by $4.6\times$.
 Six instances sit within $1.5\times$ of a threshold: two translation axes at
 $15.2^\circ/16.8^\circ$, and four origins at $0.306$--$0.340$\,m.
@@ -715,12 +767,13 @@ factor on the matched validation subset. Its predicted masks contain
 near-hinge points, but the tested selectors do not outperform the handle
 rule reliably. These findings are conditional on this subset and model.
 
-Pushing past our submitted score means improving one of the three factors in
-\metric{} $\approx$ \apfifty{} $\times\, r_{\text{axis}} \times r_{\text{origin}}$,
-which on test read $0.4370 \times 93.85\% \times 82.42\%$. The arithmetic
-points somewhere counter-intuitive. Making the axis \emph{perfect} yields
-only $0.360$; making the origin perfect yields $0.410$. Origin, not axis, is
-the weak factor --- and we had spent our effort on the axis.
+As a rough retention proxy, the product
+\metric{} $\approx$ \apfifty{} $\times\, r_{\text{axis}} \times r_{\text{origin}}$
+on test reads $0.4370 \times 93.85\% \times 82.42\%$. This is descriptive
+only: the evaluator's matching and AP aggregation do not factorize this way,
+so it is neither an oracle score nor a causal estimate. The measured rates
+suggest that origin errors may leave more headroom than axis errors under
+these conditions.
 
 Origin turns out not to be limited by segmentation at all. For every matched
 rotation the predicted mask \emph{contains} a point within $0.25$\,m of the
@@ -853,31 +906,22 @@ partial but total. $95.6\%$ of the $2854$ predicted rotation axes are
 truth shows they are simply wrong. Forcing them all vertical is therefore
 free, and worth $+0.0017$ AP$_{50}^{\text{axis}}$ at zero parameters.
 
-The consequence is that rotation-axis accuracy is now a property of the data
-rather than of the model. It equals the fraction of ground-truth rotation
-axes lying within $15^\circ$ of vertical: $169/180 = 93.9\%$ on validation.
-Of the twelve failures before the snap, seven are lateral hinges (ground
-truth horizontal); four have genuinely tilted ground truth ($23.4^\circ$,
-$29.7^\circ$, $35.0^\circ$, $44.7^\circ$ from vertical --- so no snapping
-rule can reach them either); one was the single non-vertical prediction,
-which the snap fixes. With translation at $95.8\%$, articulation
-post-processing has little measured headroom under the tested rules; this
-is not an upper bound over all possible post-processors. The geometric detector, the learned selector,
+Forcing rotation axes vertical removes the observed non-vertical prediction
+error, but still fails on lateral hinges and genuinely tilted ground-truth
+axes. The deployed-stack validation breakdown in Table~\ref{tab:main}
+reports a $93.3\%$ rotation-axis pass rate; this is a measured result for its
+matched instances, not a universal ceiling. With translation at $95.8\%$,
+articulation post-processing has little measured headroom under the tested
+rules; this is not an upper bound over all possible post-processors. The geometric detector, the learned selector,
 and rebalanced training all failed in instructive ways
 (\S\ref{sec:negative}). Mask recall ($70.5\%$ of GT instances matched at IoU
 $0.5$) caps \apfifty{} $=0.571$ on validation and is the largest untouched
-quantity. Our TTA experiments show it cannot be recovered at inference time
-from a backbone trained without the corresponding augmentation; unlocking it
-requires retraining the segmentation branch with the (now fixed) geometric
-augmentations, which we deliberately kept out of scope to preserve the
-leading mask quality. Events later tested both halves of that judgment: an
-offline structural split found mask gains that post-processing could still
-reach (\S\ref{sec:structural}), and a deadline extension funded precisely
-the augmentation retrain deferred here --- first on the interaction task,
-then on the movable model itself, and it paid both times
+quantity. The tested TTA variants did not recover it reliably with the
+available checkpoints. A later deadline extension tried full-network
+augmentation finetuning on both tasks and improved the final test scores
 (\S\ref{sec:extension}).
 
-One untested direction addresses the collapse at its documented cause. An
+One untested direction targets a possible contributor to the collapse. An
 axis is a point on $\mathbb{RP}^2$, not a free vector in $\mathbb{R}^3$, and
 our treatment of it is Euclidean throughout: per-point votes are averaged
 linearly (so opposite signs cancel, one plausible route into a single
@@ -948,7 +992,7 @@ off the geometry.
 
 \subsection{The DBSCAN trio: split, filter, suppress}
 
-The fix is offline connected-component splitting. Run DBSCAN
+The fix is offline connected-component splitting. Run DBSCAN~\cite{ester1996dbscan}
 (\texttt{min\_samples}$=1$, so it is pure $\varepsilon$-connectivity) on the
 points of each predicted mask, emit each spatial component as its own
 instance, drop components below a minimum size, and finish with IoU-based
@@ -1032,8 +1076,10 @@ so it does not provide an unbiased estimate of generalization.
 Augmentation was motivated by the released configuration's lack of geometric
 augmentation, a flip-time axis-label transform bug that we corrected, and
 poor recall on mirrored inputs ($55.9\%$ versus $70.5\%$ on original inputs,
-\S\ref{sec:negative}). Test-server scores provide held-out-label measurements,
-but the limited, repeated submissions also informed method selection.
+\S\ref{sec:negative}). Test-server scores summarize predictions against
+withheld ground truth; repeated submissions also informed method selection.
+Review of unlabeled test predictions informed the sliding-panel height
+filter in \S\ref{sec:geo}; test labels were not accessed.
 The experiments do not isolate the contribution of memorization,
 augmentation, checkpoint selection or other training changes.
 
@@ -1102,8 +1148,9 @@ $184$ against the released $0.572$: fixing the trap of \S\ref{sec:c2f} was
 necessary but not sufficient on the movable side. The released weights
 carry an official $1160{+}680$-epoch schedule, and $195$ scenes at batch
 size $1$ on a single 24\,GB GPU do not close that gap in a day. The
-curriculum explains the interaction collapse; compute explains the movable
-one.
+curriculum restart is consistent with the interaction collapse; limited
+training time and data are plausible contributors to the weaker movable
+retrain. These experiments do not isolate either factor causally.
 
 \subsection{Final standings}
 
