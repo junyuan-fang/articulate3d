@@ -34,6 +34,18 @@ the mask endpoint opposite the handle), offline DBSCAN connected-component split
 filter + NMS, then a mirror-flip finetune and an equal-weight two-model ensemble on deadline day.
 Full write-up: `paper/main.pdf` (LaTeX source `paper/main.tex`).
 
+## Method pipeline
+
+<p align="center">
+  <a href="paper/tech_report/tech_report.pdf">
+    <img src="paper/tech_report/method_figure.png" width="960"
+         alt="Technical report method pipeline: frozen USDNet, trained origin head, geometric priors and DBSCAN structural post-processing">
+  </a>
+</p>
+
+Original pipeline from the [technical report](paper/tech_report/tech_report.pdf).
+Grey: frozen components; blue: trained origin head; green: training-free geometry and structural post-processing.
+
 ## Layout
 
 ```
